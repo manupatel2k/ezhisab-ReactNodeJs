@@ -1,0 +1,327 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String        @id @default(uuid())
+  email             String        @unique
+  passwordHash      String?
+  firstName         String
+  lastName          String
+  role              Role
+  phoneNumber       String?
+  emailVerified     Boolean       @default(false)
+  verificationToken String?
+  resetToken        String?
+  resetTokenExpires DateTime?
+  googleId          String?
+  facebookId        String?
+  isActive          Boolean       @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  auditLogs         AuditLog[]
+  createdReports    DailyReport[] @relation("createdReports")
+  employee          Employee?
+  invoices          Invoice[]
+  userStores        UserStore[]
+}
+
+model Store {
+  id               String             @id @default(uuid())
+  name             String
+  address          String
+  city             String
+  state            String
+  zipCode          String
+  phone            String
+  taxId            String?
+  isActive         Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  dailyReports     DailyReport[]
+  employees        Employee[]
+  invoices         Invoice[]
+  lotteryInventory LotteryInventory[]
+  payrolls         Payroll[]
+  settings         Setting[]
+  userStores       UserStore[]
+}
+
+model UserStore {
+  id        String   @id @default(uuid())
+  userId    String
+  storeId   String
+  position  String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+}
+
+model DailyReport {
+  id             String          @id @default(uuid())
+  storeId        String
+  reportDate     DateTime
+  createdById    String?
+  status         ReportStatus    @default(draft)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  business       BusinessReport?
+  creator        User?           @relation("createdReports", fields: [createdById], references: [id])
+  store          Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+  lottery        LotteryReport?
+  payrolls       Payroll[]
+  scannedTickets ScannedTicket[]
+
+  @@unique([storeId, reportDate])
+}
+
+model BusinessReport {
+  id               String      @id @default(uuid())
+  dailyReportId    String      @unique
+  netSalesRegister Float
+  netTaxes         Float
+  mealTax          Float
+  refund           Float       @default(0)
+  cheque           Float       @default(0)
+  creditCard       Float       @default(0)
+  registerCash     Float
+  overShort        Float       @default(0)
+  cashToAccount    Float
+  notes            String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  dailyReport      DailyReport @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+}
+
+model LotteryReport {
+  id                             String      @id @default(uuid())
+  dailyReportId                  String      @unique
+  todayOnlineNetSales            Float       @default(0)
+  todayOnlineCashing             Float       @default(0)
+  todayInstantCashing            Float       @default(0)
+  todayInstantSaleSr34           Float       @default(0)
+  yesterdayOnlineNetSales     	 Float       @default(0)
+  yesterdayOnlineCashing  		 Float       @default(0)
+  yesterdayInstantCashing 		 Float       @default(0)
+  totalOnlineBalance             Float       @default(0)
+  creditSales                    Float       @default(0)
+  debitSales                     Float       @default(0)
+  registerCash                   Float       @default(0)
+  overShort                      Float       @default(0)
+  notes                          String?
+  createdAt                      DateTime    @default(now())
+  updatedAt                      DateTime    @updatedAt
+  dailyReport                    DailyReport @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+}
+
+model LotteryMaster {
+  id             String             @id @default(uuid())
+  gameNumber     String             @unique
+  gameName       String
+  price          Float
+  ticketsPerBook Int
+  isActive       Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  inventory      LotteryInventory[]
+
+  @@unique([gameNumber, isActive])
+}
+
+model LotteryInventory {
+  id              String          @id @default(uuid())
+  storeId         String
+  gameId          String
+  bookNumber      String
+  referenceNumber String?
+  status          InventoryStatus @default(available)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  game            LotteryMaster   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  store           Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  scannedTickets  ScannedTicket[]
+
+  @@unique([storeId, gameId, bookNumber])
+}
+
+model ScannedTicket {
+  id            String           @id @default(uuid())
+  dailyReportId String
+  inventoryId   String
+  ticketNumber  String
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  dailyReport   DailyReport      @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+  inventory     LotteryInventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryId, dailyReportId])
+}
+
+model ActionType {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  description String?
+  createdAt   DateTime   @default(now())
+  auditLogs   AuditLog[]
+}
+
+model AuditLog {
+  id           String      @id @default(uuid())
+  userId       String?
+  actionTypeId String?
+  entityType   String
+  entityId     String?
+  oldValues    Json?
+  newValues    Json?
+  ipAddress    String?
+  userAgent    String?
+  statusCode   Int?
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+  actionType   ActionType? @relation(fields: [actionTypeId], references: [id])
+  user         User?       @relation(fields: [userId], references: [id])
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  storeId       String
+  userId        String?
+  dailyReportId String?
+  vendorName    String?
+  invoiceDate   DateTime
+  amount        Float
+  paymentMethod PaymentMethod
+  checkNumber   String?
+  invoiceNumber String?
+  description   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  invoiceType   String
+  dailyReport   DailyReport?  @relation(fields: [dailyReportId], references: [id])
+  store         Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id])
+}
+
+model Employee {
+  id                    String         @id @default(uuid())
+  userId                String         @unique
+  storeId               String
+  hireDate              DateTime
+  hourlyRate            Float?
+  salary                Float?
+  employmentType        EmploymentType
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  store                 Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payrolls              Payroll[]
+}
+
+model Payroll {
+  id             String        @id @default(uuid())
+  employeeId     String
+  storeId        String
+  dailyReportId  String?
+  payPeriodStart DateTime
+  payPeriodEnd   DateTime
+  totalHours     Float
+  netAmount      Float
+  paymentMethod  PaymentMethod
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  dailyReport    DailyReport?  @relation(fields: [dailyReportId], references: [id])
+  employee       Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store          Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+model Setting {
+  id        String          @id @default(uuid())
+  storeId   String
+  key       String
+  value     String
+  dataType  SettingDataType
+  isGlobal  Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  store     Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, key])
+}
+
+enum Role {
+  admin
+  manager
+  employee
+}
+
+enum ReportStatus {
+  draft
+  submitted
+  approved
+  rejected
+}
+
+enum InventoryStatus {
+  available
+  activated
+  returned
+  sold
+  settled
+}
+
+enum ExpenseType {
+  utility
+  maintenance
+  inventory
+  salary
+  rent
+  other
+}
+
+enum PaymentMethod {
+  cash
+  cheque
+  credit
+  debit
+  bankTransfer
+}
+
+enum EmploymentType {
+  fullTime
+  partTime
+  contract
+  seasonal
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+}
+
+enum SettingDataType {
+  string
+  number
+  boolean
+  json
+  date
+}
+
+enum InvoiceType {
+  Purchase
+  Expense
+} 

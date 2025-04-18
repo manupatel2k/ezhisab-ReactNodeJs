@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+don't create new UI files unless said so clearly and explicitly. Don't change or rearrange UI unless explicitly said so.
