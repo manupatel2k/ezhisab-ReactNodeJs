@@ -14,16 +14,16 @@ const DailyLotteryReport: React.FC = () => {
     { label: "Online Net Sales", value: 0 },
     { label: "Online Cashing", value: 0 },
     { label: "Instant Cashing", value: 0 },
-    { label: "Instant Sale SR34", value: 0 },
+    { label: "Instant Sale SR34", value: 0, isCalculated: true },
   ]);
 
   const [yesterdayInvoice, setYesterdayInvoice] = useState<LotteryReportItem[]>([
     { label: "Online Net Sales", value: 0 },
     { label: "Online Cashing", value: 0 },
     { label: "Instant Cashing", value: 0 },
-    { label: "Previous Day Online Net Sales", value: 0 },
-    { label: "Previous Day Online Cashing", value: 0 },
-    { label: "Previous Day Instant Cashing", value: 0 },
+    { label: "Previous Day Online Net Sales", value: 0, isCalculated: true },
+    { label: "Previous Day Online Cashing", value: 0, isCalculated: true },
+    { label: "Previous Day Instant Cashing", value: 0, isCalculated: true },
   ]);
 
   const [todayCash, setTodayCash] = useState<LotteryReportItem[]>([
@@ -108,7 +108,7 @@ const DailyLotteryReport: React.FC = () => {
   return (
     <div className="bg-card p-4 rounded-md shadow border border-border">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-medium">Daily Lottery Report</h2>
+        <h2 className="text-lg font-medium text-foreground">Daily Lottery Report</h2>
         <div className="flex gap-2">
           <Button 
             onClick={handleSaveReport}
@@ -129,7 +129,7 @@ const DailyLotteryReport: React.FC = () => {
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
-          <h3 className="font-medium mb-3">Today Invoice</h3>
+          <h3 className="font-medium mb-3 text-foreground">Today Invoice</h3>
           <div className="space-y-2">
             {todayInvoice.map((item, index) => (
               <div key={index} className="flex justify-between items-center">
@@ -144,8 +144,7 @@ const DailyLotteryReport: React.FC = () => {
                   }}
                   disabled={item.isCalculated}
                   className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
-                    ${item.isCalculated ? 'bg-muted cursor-not-allowed' : ''} 
-                    ${index % 2 === 1 ? '' : 'bg-muted/30'}`}
+                    ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
             ))}
@@ -153,7 +152,7 @@ const DailyLotteryReport: React.FC = () => {
         </div>
 
         <div>
-          <h3 className="font-medium mb-3">Yesterday Invoice</h3>
+          <h3 className="font-medium mb-3 text-foreground">Yesterday Invoice</h3>
           <div className="space-y-2">
             {yesterdayInvoice.map((item, index) => (
               <div key={index} className="flex justify-between items-center">
@@ -168,8 +167,7 @@ const DailyLotteryReport: React.FC = () => {
                   }}
                   disabled={item.isCalculated}
                   className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
-                    ${item.isCalculated ? 'bg-muted cursor-not-allowed' : ''} 
-                    ${index % 2 === 1 ? '' : 'bg-muted/30'}`}
+                    ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
             ))}
@@ -177,7 +175,7 @@ const DailyLotteryReport: React.FC = () => {
         </div>
 
         <div>
-          <h3 className="font-medium mb-3">Today Cash</h3>
+          <h3 className="font-medium mb-3 text-foreground">Today Cash</h3>
           <div className="space-y-2">
             {todayCash.map((item, index) => (
               <div key={index} className="flex justify-between items-center">
@@ -192,8 +190,7 @@ const DailyLotteryReport: React.FC = () => {
                   }}
                   disabled={item.isCalculated}
                   className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
-                    ${item.isCalculated ? 'bg-muted cursor-not-allowed' : ''} 
-                    ${index % 2 === 1 ? '' : 'bg-muted/30'}`}
+                    ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
                 />
               </div>
             ))}

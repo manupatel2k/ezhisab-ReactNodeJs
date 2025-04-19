@@ -66,7 +66,7 @@ export const ReportProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     { label: "Credit Card", value: 0 },
     { label: "Register Cash", value: 0 },
     { label: "Over/Short", value: 0, isCalculated: true },
-    { label: "Cash to Account", value: 0, isCalculated: true },
+    { label: "Cash to Account", value: 0, isCalculated: true }
   ]);
 
   // Invoices state

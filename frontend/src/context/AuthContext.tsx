@@ -42,6 +42,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
+      // Set up the authorization header for all requests
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       fetchUser();
     } else {
       setIsLoading(false);
@@ -53,20 +55,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const response = await api.get('/auth/me');
       setUser(response.data);
     } catch (err) {
-      // If the /auth/me endpoint fails, try to get the user from localStorage
-      const userStr = localStorage.getItem('user');
-      if (userStr) {
-        try {
-          const user = JSON.parse(userStr);
-          setUser(user);
-        } catch (parseErr) {
-          console.error('Error parsing user from localStorage', parseErr);
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-        }
-      } else {
-        localStorage.removeItem('token');
-      }
+      // Clear all auth data if the /auth/me endpoint fails
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // Also clear the Authorization header
+      delete api.defaults.headers.common['Authorization'];
+      setUser(null);
+      
+      console.error('Failed to fetch user profile:', err);
     } finally {
       setIsLoading(false);
     }
@@ -78,10 +74,21 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setIsLoading(true);
       const response = await api.post('/auth/login', { email, password });
       const { token, user } = response.data;
+      
+      // Set the auth token for API calls
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      
+      // Store auth data
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
       setUser(user);
     } catch (err: any) {
+      // Clear any existing auth data on login failure
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      delete api.defaults.headers.common['Authorization'];
+      setUser(null);
+      
       setError(err.response?.data?.error?.message || 'An error occurred during login');
       throw err;
     } finally {
@@ -95,10 +102,21 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setIsLoading(true);
       const response = await api.post('/auth/register', { firstName, lastName, email, password });
       const { token, user } = response.data;
+      
+      // Set the auth token for API calls
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      
+      // Store auth data
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
       setUser(user);
     } catch (err: any) {
+      // Clear any existing auth data on registration failure
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      delete api.defaults.headers.common['Authorization'];
+      setUser(null);
+      
       setError(err.response?.data?.error?.message || 'An error occurred during registration');
       throw err;
     } finally {
@@ -107,8 +125,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   };
 
   const logout = () => {
+    // Clear all auth data
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    delete api.defaults.headers.common['Authorization'];
     setUser(null);
   };
 

@@ -67,6 +67,29 @@ lotteryRoutes.get('/games', authorize('admin', 'manager'), async (req, res, next
   }
 });
 
+// Get lottery books by status
+lotteryRoutes.get('/books', authorize('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    
+    const books = await prisma.lotteryInventory.findMany({
+      where: {
+        status: status as string
+      },
+      include: {
+        game: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+    
+    res.json(books);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Create new lottery game
 lotteryRoutes.post('/games', authorize('admin'), async (req, res, next) => {
   try {
@@ -88,6 +111,69 @@ lotteryRoutes.post('/games', authorize('admin'), async (req, res, next) => {
     });
 
     res.status(201).json(game);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update lottery game
+lotteryRoutes.put('/games/:id', authorize('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const data = lotteryGameSchema.parse(req.body);
+
+    // Check if game exists
+    const existingGame = await prisma.lotteryMaster.findUnique({
+      where: { id }
+    });
+
+    if (!existingGame) {
+      throw new AppError(404, 'Game not found', 'GAME_NOT_FOUND');
+    }
+
+    // Check if new game number conflicts with another game
+    if (data.gameNumber !== existingGame.gameNumber) {
+      const gameWithNumber = await prisma.lotteryMaster.findUnique({
+        where: { gameNumber: data.gameNumber }
+      });
+
+      if (gameWithNumber) {
+        throw new AppError(409, 'Game number already exists', 'DUPLICATE_GAME');
+      }
+    }
+
+    const updatedGame = await prisma.lotteryMaster.update({
+      where: { id },
+      data
+    });
+
+    res.json(updatedGame);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete lottery game
+lotteryRoutes.delete('/games/:id', authorize('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Check if game exists
+    const existingGame = await prisma.lotteryMaster.findUnique({
+      where: { id }
+    });
+
+    if (!existingGame) {
+      throw new AppError(404, 'Game not found', 'GAME_NOT_FOUND');
+    }
+
+    // Soft delete by setting isActive to false
+    await prisma.lotteryMaster.update({
+      where: { id },
+      data: { isActive: false }
+    });
+
+    res.status(204).end();
   } catch (error) {
     next(error);
   }
@@ -124,13 +210,11 @@ lotteryRoutes.post('/reports/:dailyReportId', authorize('admin', 'manager'), asy
 lotteryRoutes.post('/books/activate', authorize('admin', 'manager'), async (req, res, next) => {
   try {
     const { storeId, bookNumber } = req.body;
-
     if (!storeId || !bookNumber) {
-      throw new AppError(400, 'Store ID and book number are required', 'MISSING_FIELDS');
+      throw new AppError(400, 'Store ID and book number are required', 'MISSING_REQUIRED_FIELDS');
     }
-
-    const inventory = await lotteryService.activateBook(storeId, bookNumber);
-    res.json(inventory);
+    const result = await lotteryService.activateBook(storeId, bookNumber, req.user.id);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -140,13 +224,11 @@ lotteryRoutes.post('/books/activate', authorize('admin', 'manager'), async (req,
 lotteryRoutes.post('/books/return', authorize('admin', 'manager'), async (req, res, next) => {
   try {
     const { storeId, bookNumber } = req.body;
-
     if (!storeId || !bookNumber) {
-      throw new AppError(400, 'Store ID and book number are required', 'MISSING_FIELDS');
+      throw new AppError(400, 'Store ID and book number are required', 'MISSING_REQUIRED_FIELDS');
     }
-
-    const inventory = await lotteryService.returnBook(storeId, bookNumber);
-    res.json(inventory);
+    const result = await lotteryService.returnBook(storeId, bookNumber, req.user.id);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -204,6 +286,110 @@ lotteryRoutes.delete('/tickets/:id', authorize('admin', 'manager'), async (req, 
       where: { id }
     });
 
+    res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get all lottery inventory items
+lotteryRoutes.get('/inventory', authorize('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { storeId } = req.query;
+    
+    if (!storeId) {
+      throw new AppError(400, 'Store ID is required', 'MISSING_STORE_ID');
+    }
+    
+    const inventory = await prisma.lotteryInventory.findMany({
+      where: {
+        storeId: storeId as string
+      },
+      include: {
+        game: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+    
+    res.json(inventory);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create a new inventory item
+lotteryRoutes.post('/inventory', authorize('admin', 'manager'), async (req, res, next) => {
+  try {
+    const data = lotteryInventorySchema.parse(req.body);
+    
+    // Check if book already exists
+    const existingBook = await prisma.lotteryInventory.findFirst({
+      where: {
+        storeId: data.storeId,
+        gameId: data.gameId,
+        bookNumber: data.bookNumber
+      }
+    });
+    
+    if (existingBook) {
+      throw new AppError(409, 'Book already exists in inventory', 'DUPLICATE_BOOK');
+    }
+    
+    // Create new inventory item
+    const inventory = await prisma.lotteryInventory.create({
+      data: {
+        storeId: data.storeId,
+        gameId: data.gameId,
+        bookNumber: data.bookNumber,
+        referenceNumber: data.referenceNumber,
+        status: data.status || 'available'
+      },
+      include: {
+        game: true
+      }
+    });
+    
+    res.status(201).json(inventory);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update inventory item status
+lotteryRoutes.put('/inventory/:id/status', authorize('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      throw new AppError(400, 'Status is required', 'MISSING_STATUS');
+    }
+    
+    const inventory = await prisma.lotteryInventory.update({
+      where: { id },
+      data: { status },
+      include: {
+        game: true
+      }
+    });
+    
+    res.json(inventory);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete inventory item
+lotteryRoutes.delete('/inventory/:id', authorize('admin', 'manager'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    await prisma.lotteryInventory.delete({
+      where: { id }
+    });
+    
     res.status(204).end();
   } catch (error) {
     next(error);

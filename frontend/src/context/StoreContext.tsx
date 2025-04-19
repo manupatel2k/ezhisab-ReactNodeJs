@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { storeAPI } from '@/lib/api';
+import { useAuthContext } from './AuthContext';
 
 interface Store {
   id: string;
@@ -21,10 +22,17 @@ const StoreContext = createContext<StoreContextType | undefined>(undefined);
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [stores, setStores] = useState<Store[]>([]);
   const [currentStore, setCurrentStore] = useState<Store | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { isAuthenticated } = useAuthContext();
 
   const fetchStores = async () => {
+    if (!isAuthenticated) {
+      setStores([]);
+      setCurrentStore(null);
+      return;
+    }
+
     try {
       setIsLoading(true);
       setError(null);
@@ -33,17 +41,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (response.data.length > 0 && !currentStore) {
         setCurrentStore(response.data[0]);
       }
-    } catch (err) {
-      setError('Failed to fetch stores');
-      console.error('Error fetching stores:', err);
+    } catch (err: any) {
+      // Don't set error if unauthorized - this is handled by auth context
+      if (err.response?.status !== 401) {
+        setError('Failed to fetch stores');
+        console.error('Error fetching stores:', err);
+      }
+      setStores([]);
+      setCurrentStore(null);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchStores();
-  }, []);
+    // Only fetch stores when authenticated
+    if (isAuthenticated) {
+      fetchStores();
+    }
+  }, [isAuthenticated]); // Re-run when auth state changes
 
   return (
     <StoreContext.Provider value={{ stores, currentStore, setCurrentStore, fetchStores, isLoading, error }}>

@@ -4,10 +4,13 @@ import { Camera, AlertCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { format } from 'date-fns';
+import { lotteryAPI } from '@/lib/api';
+import { useStoreContext } from '@/context/StoreContext';
 
 interface ScanTicket {
   id: string;
-  gamePrice: string;
+  price: string;
   gameName: string;
   gameNumber: string;
   bookNumber: string;
@@ -21,10 +24,11 @@ interface ScanTicket {
 }
 
 interface LotteryTicketScanProps {
-  data?: any[];
+  data?: ScanTicket[];
 }
 
 const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
+  const { currentStore } = useStoreContext();
   const [tickets, setTickets] = useState<ScanTicket[]>([]);
   const [scanNumber, setScanNumber] = useState('');
   const [gameNumber, setGameNumber] = useState('');
@@ -33,12 +37,94 @@ const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
   const [lastScanned, setLastScanned] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [instantSaleTotal, setInstantSaleTotal] = useState(0);
+  const [showTicketScanError, setShowTicketScanError] = useState(false);
+  const [ticketScanErrorDetails, setTicketScanErrorDetails] = useState<{
+    bookNumber: string;
+    gameName: string;
+    yesterdayTicket: string;
+    currentTicket: string;
+  } | null>(null);
 
   // Calculate instant sale total whenever tickets change
   useEffect(() => {
     const total = tickets.reduce((sum, ticket) => sum + parseFloat(ticket.total), 0);
     setInstantSaleTotal(total);
   }, [tickets]);
+
+  const findLastScannedTicket = async (storeId: string, gameId: string, bookNumber: string, currentDate: Date, maxDaysBack: number = 30): Promise<{
+    lastTicket: string | null;
+    reportDate: string | null;
+  }> => {
+    try {
+      const formattedDate = format(currentDate, 'yyyy-MM-dd');
+      console.log('Checking for scanned tickets on:', formattedDate);
+
+      // First, get the book's activation date
+      const response = await lotteryAPI.getAllInventory(storeId);
+      const inventory = response.data || [];
+      
+      if (!Array.isArray(inventory)) {
+        console.error('Invalid inventory response:', inventory);
+        return { lastTicket: null, reportDate: null };
+      }
+
+      const book = inventory.find((item: any) => 
+        item.bookNumber === bookNumber && 
+        item.gameId === gameId
+      );
+
+      if (!book) {
+        console.log('Book not found in inventory');
+        return { lastTicket: null, reportDate: null };
+      }
+
+      // Get activation date in YYYY-MM-DD format
+      const activationDate = format(new Date(book.createdAt), 'yyyy-MM-dd');
+      console.log('Book activation date:', activationDate);
+
+      // If current check date is before activation date, stop searching
+      if (formattedDate < activationDate) {
+        console.log('Reached date before book activation, stopping search');
+        return { lastTicket: null, reportDate: null };
+      }
+      
+      // Get the daily report for this date
+      const report = await lotteryAPI.getDailyReport(formattedDate, storeId);
+      
+      // If we found a report with scanned tickets
+      if (report?.scannedTickets?.length > 0) {
+        const matchingTickets = report.scannedTickets
+          .filter((t: any) => t.gameId === gameId && t.bookNumber === bookNumber)
+          .sort((a: any, b: any) => b.currentTicket.localeCompare(a.currentTicket));
+
+        if (matchingTickets.length > 0) {
+          console.log('Found matching ticket:', matchingTickets[0]);
+          // Stop searching since we found a match
+          return {
+            lastTicket: matchingTickets[0].currentTicket,
+            reportDate: formattedDate
+          };
+        }
+      }
+
+      // Stop if we've reached the maximum days to look back
+      if (maxDaysBack <= 0) {
+        console.log('Reached maximum days to look back, stopping search');
+        return { lastTicket: null, reportDate: null };
+      }
+
+      // If no matching tickets found in this report, check the previous day
+      const previousDay = new Date(currentDate);
+      previousDay.setDate(previousDay.getDate() - 1);
+      
+      // Recursive call to check previous day with decremented maxDaysBack
+      return findLastScannedTicket(storeId, gameId, bookNumber, previousDay, maxDaysBack - 1);
+      
+    } catch (error) {
+      console.error('Error finding last scanned ticket:', error);
+      return { lastTicket: null, reportDate: null };
+    }
+  };
 
   const validateTicketFormat = (scan: string): boolean => {
     // Format: XXX-XXXXXX-XXX (Game-Book-Ticket)
@@ -59,59 +145,13 @@ const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
     };
   };
 
-  const validateGameExists = (gameNumber: string): boolean => {
-    // In a real implementation, this would check against a database
-    // For now, we'll assume any 3-digit number is valid
-    return /^\d{3}$/.test(gameNumber);
-  };
-
-  const validateBookExists = (gameNumber: string, bookNumber: string): boolean => {
-    // In a real implementation, this would check against a database
-    // For now, we'll assume any 6-digit number is valid
-    return /^\d{6}$/.test(bookNumber);
-  };
-
-  const validateTicketNumber = (bookNumber: string, ticketNumber: string): boolean => {
-    // In a real implementation, this would check against the book's start/end range
-    // For now, we'll assume any 3-digit number is valid
-    return /^\d{3}$/.test(ticketNumber);
-  };
-
-  const checkDuplicateScan = (gameNumber: string, bookNumber: string, ticketNumber: string): boolean => {
-    return tickets.some(ticket => 
-      ticket.gameNumber === gameNumber && 
-      ticket.bookNumber === bookNumber && 
-      ticket.currentTicket === ticketNumber
-    );
-  };
-
-  const calculateQuantitySold = (bookNumber: string, ticketNumber: string): number => {
-    // Find the last scan for this book
-    const bookScans = tickets.filter(ticket => ticket.bookNumber === bookNumber);
-    
-    if (bookScans.length === 0) {
-      // First scan of this book
-      return 1;
-    }
-    
-    // Get the last scan for this book
-    const lastScan = bookScans[bookScans.length - 1];
-    const lastTicketNumber = parseInt(lastScan.currentTicket);
-    const currentTicketNumber = parseInt(ticketNumber);
-    
-    // Calculate quantity sold
-    return currentTicketNumber - lastTicketNumber + 1;
-  };
-
-  const calculateTotal = (gameNumber: string, quantitySold: number): string => {
-    // In a real implementation, this would get the price from the game settings
-    // For now, we'll use a fixed price of $2 per ticket
-    const pricePerTicket = 2;
-    return (quantitySold * pricePerTicket).toFixed(2);
-  };
-
-  const processScan = (scan: string) => {
+  const processScan = async (scan: string) => {
     setError(null);
+    
+    if (!currentStore?.id) {
+      setError("Please select a store first");
+      return;
+    }
     
     // Extract ticket information
     const ticketInfo = extractTicketInfo(scan);
@@ -122,58 +162,161 @@ const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
     
     const { gameNumber, bookNumber, ticketNumber } = ticketInfo;
     
-    // Validate game exists
-    if (!validateGameExists(gameNumber)) {
-      setError(`Game number ${gameNumber} does not exist`);
-      return;
+    try {
+      // Check if book exists in inventory and is activated
+      const response = await lotteryAPI.getAllInventory(currentStore.id);
+      const inventory = response.data || [];
+      
+      if (!Array.isArray(inventory)) {
+        console.error('Invalid inventory response:', inventory);
+        setError('Failed to load inventory data');
+        return;
+      }
+
+      const existingBook = inventory.find((item: any) => 
+        item.bookNumber === bookNumber && 
+        item.game?.gameNumber === gameNumber &&
+        item.status === 'activated'
+      );
+
+      if (!existingBook) {
+        setError('Book not found or not activated. Please activate the book first.');
+        return;
+      }
+
+      if (!existingBook.game) {
+        setError('Invalid book data: game information is missing');
+        return;
+      }
+
+      // Validate required game properties
+      if (typeof existingBook.game.price !== 'number' || 
+          typeof existingBook.game.ticketsPerBook !== 'number' ||
+          !existingBook.game.gameName) {
+        setError('Invalid game data: missing required properties');
+        return;
+      }
+
+      // Check for duplicate scans on the same day
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const isDuplicate = tickets.some(ticket => 
+        ticket.gameNumber === gameNumber &&
+        ticket.bookNumber === bookNumber &&
+        format(new Date(ticket.activatedOn), 'yyyy-MM-dd') === today
+      );
+
+      if (isDuplicate) {
+        setError('This book has already been scanned today.');
+        return;
+      }
+
+      // Find the last scanned ticket from previous reports
+      const { lastTicket: lastScannedTicketNumber } = 
+        await findLastScannedTicket(currentStore.id, existingBook.game.id, bookNumber, new Date());
+      
+      if (lastScannedTicketNumber) {
+        const lastTicketNumber = parseInt(lastScannedTicketNumber);
+        const currentTicketNumber = parseInt(ticketNumber);
+
+        if (currentTicketNumber > lastTicketNumber) {
+          // Show error modal with details
+          setTicketScanErrorDetails({
+            bookNumber,
+            gameName: existingBook.game.gameName,
+            yesterdayTicket: lastScannedTicketNumber,
+            currentTicket: ticketNumber
+          });
+          setShowTicketScanError(true);
+          setScanNumber('');
+          return;
+        }
+      }
+
+      // Get the starting ticket number - use lastScannedTicketNumber if available, otherwise use book's reference number
+      const bookStartNumber = lastScannedTicketNumber || existingBook.referenceNumber;
+      if (!bookStartNumber) {
+        setError('Invalid book data: reference number is missing');
+        return;
+      }
+
+      console.log('Using start number:', bookStartNumber, lastScannedTicketNumber ? '(from last scan)' : '(from book reference)');
+
+      // Initialize variables
+      let shiftStartTicket = bookStartNumber;
+      let quantitySold = 0;
+
+      // Calculate quantity sold
+      const startNumber = parseInt(shiftStartTicket);
+      const currentTicketNumber = parseInt(ticketNumber);
+      
+      // Calculate how many tickets have been sold (start number - current ticket + 1)
+      // For example: if start is 150 and current is 145, then 150 - 145 + 1 = 6 tickets sold
+      quantitySold = startNumber - currentTicketNumber + 1;
+
+      if (quantitySold < 0) {
+        setError('Invalid ticket number. Current ticket number is greater than start number.');
+        return;
+      }
+
+      if (quantitySold > existingBook.game.ticketsPerBook) {
+        setError(`Invalid ticket number. Quantity sold (${quantitySold}) exceeds total tickets per book (${existingBook.game.ticketsPerBook}).`);
+        return;
+      }
+
+      const total = (quantitySold * existingBook.game.price).toFixed(2);
+    
+      // Create new ticket record
+      const newTicket: ScanTicket = {
+        id: crypto.randomUUID(),
+        price: existingBook.game.price.toFixed(2),
+        gameName: existingBook.game.gameName,
+        gameNumber,
+        bookNumber,
+        status: "Active",
+        activatedOn: new Date().toISOString().split('T')[0],
+        overAllTickets: existingBook.game.ticketsPerBook.toString(),
+        shiftStartedTicket: shiftStartTicket,
+        currentTicket: ticketNumber,
+        quantitySold,
+        total
+      };
+    
+      // Add to tickets list
+      setTickets([...tickets, newTicket]);
+      setLastScanned(ticketNumber);
+      
+      // Clear scan input
+      setScanNumber('');
+
+      // Save to database
+      await lotteryAPI.scanTicket({
+        gameId: existingBook.game.id,
+        bookNumber,
+        ticketNumber,
+        currentTicket: ticketNumber,
+        storeId: currentStore.id,
+        gameName: existingBook.game.gameName,
+        gamePrice: existingBook.game.price,
+        totalTickets: existingBook.game.ticketsPerBook,
+        status: 'scanned',
+        activatedOn: new Date().toISOString(),
+        shiftStartTicket,
+        quantitySold,
+        total: parseFloat(total)
+      });
+
+    } catch (error) {
+      console.error('Error scanning ticket:', error);
+      if (error instanceof Error) {
+        setError(error.message);
+      } else if (typeof error === 'object' && error !== null && 'response' in error) {
+        const axiosError = error as { response?: { data?: { message?: string } } };
+        setError(axiosError.response?.data?.message || 'Failed to scan ticket');
+      } else {
+        setError('Failed to scan ticket');
+      }
+      setScanNumber('');
     }
-    
-    // Validate book exists
-    if (!validateBookExists(gameNumber, bookNumber)) {
-      setError(`Book number ${bookNumber} does not exist for game ${gameNumber}`);
-      return;
-    }
-    
-    // Validate ticket number
-    if (!validateTicketNumber(bookNumber, ticketNumber)) {
-      setError(`Invalid ticket number ${ticketNumber} for book ${bookNumber}`);
-      return;
-    }
-    
-    // Check for duplicate scan
-    if (checkDuplicateScan(gameNumber, bookNumber, ticketNumber)) {
-      setError(`Ticket ${ticketNumber} from book ${bookNumber} has already been scanned today`);
-      return;
-    }
-    
-    // Calculate quantity sold
-    const quantitySold = calculateQuantitySold(bookNumber, ticketNumber);
-    
-    // Calculate total
-    const total = calculateTotal(gameNumber, quantitySold);
-    
-    // Create new ticket record
-    const newTicket: ScanTicket = {
-      id: crypto.randomUUID(),
-      gamePrice: "$2.00", // In a real implementation, this would come from game settings
-      gameName: `Game ${gameNumber}`, // In a real implementation, this would come from game settings
-      gameNumber,
-      bookNumber,
-      status: "Active",
-      activatedOn: new Date().toISOString().split('T')[0],
-      overAllTickets: "100", // In a real implementation, this would come from book settings
-      shiftStartedTicket: tickets.length > 0 ? tickets[0].currentTicket : ticketNumber,
-      currentTicket: ticketNumber,
-      quantitySold,
-      total
-    };
-    
-    // Add to tickets list
-    setTickets([...tickets, newTicket]);
-    setLastScanned(ticketNumber);
-    
-    // Clear scan input
-    setScanNumber('');
   };
 
   const handleScanSubmit = (e: React.FormEvent) => {
@@ -197,7 +340,6 @@ const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
   };
 
   const handleFinishScanning = () => {
-    // In a real implementation, this would save the scanned tickets to the database
     toast({
       title: "Scanning Complete",
       description: `${tickets.length} tickets scanned. Total: $${instantSaleTotal.toFixed(2)}`,
@@ -205,30 +347,32 @@ const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
   };
 
   return (
-    <div className="bg-card p-4 rounded-md shadow mt-4 border border-border">
-      <h2 className="text-xl font-medium mb-4 text-foreground">Lottery Ticket Scan</h2>
-
+    <div className="space-y-4">
       {error && (
-        <Alert variant="destructive" className="mb-4">
+        <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <h3 className="font-medium mb-3 text-foreground">Scan Code Here</h3>
-          <form onSubmit={handleScanSubmit} className="flex mb-3">
-            <input 
-              type="text" 
-              placeholder="Scan Number" 
-              className="border border-input rounded-l-md px-3 py-2 flex-1 bg-background text-foreground"
-              value={scanNumber}
-              onChange={(e) => setScanNumber(e.target.value)}
-            />
-            <Button type="submit" variant="ghost" className="rounded-l-none border border-l-0 border-input">
-              <Camera className="h-5 w-5" />
-            </Button>
+          <h3 className="font-medium mb-3 text-foreground">Scan Ticket</h3>
+          <form onSubmit={handleScanSubmit} className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Scan ticket..."
+                className="flex-1 border border-input rounded-md px-3 py-2 bg-background text-foreground"
+                value={scanNumber}
+                onChange={(e) => setScanNumber(e.target.value)}
+                autoFocus
+              />
+              <Button type="submit" variant="default">
+                <Camera className="h-4 w-4 mr-2" />
+                Scan
+              </Button>
+            </div>
           </form>
         </div>
 
@@ -294,30 +438,22 @@ const LotteryTicketScan: React.FC<LotteryTicketScanProps> = ({ data = [] }) => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tickets.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={12} className="text-center py-4 text-muted-foreground">
-                    No data available
-                  </TableCell>
+              {tickets.map((ticket, index) => (
+                <TableRow key={ticket.id}>
+                  <TableCell>{index + 1}</TableCell>
+                  <TableCell>${ticket.price}</TableCell>
+                  <TableCell>{ticket.gameName}</TableCell>
+                  <TableCell>{ticket.gameNumber}</TableCell>
+                  <TableCell>{ticket.bookNumber}</TableCell>
+                  <TableCell>{ticket.status}</TableCell>
+                  <TableCell>{ticket.activatedOn}</TableCell>
+                  <TableCell>{ticket.overAllTickets}</TableCell>
+                  <TableCell>{ticket.shiftStartedTicket}</TableCell>
+                  <TableCell>{ticket.currentTicket}</TableCell>
+                  <TableCell>{ticket.quantitySold}</TableCell>
+                  <TableCell>${ticket.total}</TableCell>
                 </TableRow>
-              ) : (
-                tickets.map((ticket, index) => (
-                  <TableRow key={ticket.id}>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell>{ticket.gamePrice}</TableCell>
-                    <TableCell>{ticket.gameName}</TableCell>
-                    <TableCell>{ticket.gameNumber}</TableCell>
-                    <TableCell>{ticket.bookNumber}</TableCell>
-                    <TableCell>{ticket.status}</TableCell>
-                    <TableCell>{ticket.activatedOn}</TableCell>
-                    <TableCell>{ticket.overAllTickets}</TableCell>
-                    <TableCell>{ticket.shiftStartedTicket}</TableCell>
-                    <TableCell>{ticket.currentTicket}</TableCell>
-                    <TableCell>{ticket.quantitySold}</TableCell>
-                    <TableCell>${ticket.total}</TableCell>
-                  </TableRow>
-                ))
-              )}
+              ))}
             </TableBody>
           </Table>
         </div>

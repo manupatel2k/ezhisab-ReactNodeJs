@@ -91,15 +91,24 @@ export const lotteryAPI = {
   createGame: (gameData: any) => 
     api.post('/lottery/games', gameData),
   
+  updateGame: (id: string, gameData: any) => 
+    api.put(`/lottery/games/${id}`, gameData),
+  
+  deleteGame: (id: string) => 
+    api.delete(`/lottery/games/${id}`),
+  
   // Inventory
-  getAllInventory: () => 
-    api.get('/lottery/inventory'),
+  getAllInventory: (storeId: string) => 
+    api.get(`/lottery/inventory?storeId=${storeId}`),
   
   createInventory: (inventoryData: any) => 
     api.post('/lottery/inventory', inventoryData),
   
   updateInventoryStatus: (id: string, status: string) => 
     api.put(`/lottery/inventory/${id}/status`, { status }),
+  
+  deleteInventory: (id: string) => 
+    api.delete(`/lottery/inventory/${id}`),
   
   // Tickets
   getAllTickets: (startDate?: string, endDate?: string) => {
@@ -112,6 +121,31 @@ export const lotteryAPI = {
   
   scanTicket: (ticketData: any) => 
     api.post('/lottery/tickets/scan', ticketData),
+
+  // Reports
+  getDailyReport: (date: string, storeId: string) =>
+    api.get(`/lottery/reports/daily?date=${date}&storeId=${storeId}`),
+
+  saveReport: (reportData: {
+    date: string;
+    storeId: string;
+    data: any;
+  }) => api.post('/lottery/reports', reportData),
+
+  // Books
+  getBooks: (params?: { status?: string }) => {
+    let url = '/lottery/books';
+    if (params?.status) {
+      url += `?status=${params.status}`;
+    }
+    return api.get(url);
+  },
+
+  activateBook: (bookNumber: string, storeId: string) =>
+    api.post('/lottery/books/activate', { bookNumber, storeId }),
+
+  returnBook: (bookNumber: string, storeId: string) =>
+    api.post('/lottery/books/return', { bookNumber, storeId }),
 };
 
 // User API
@@ -190,14 +224,14 @@ export const lotteryApi = {
   },
 
   // Activate a lottery book
-  activateBook: async (bookId: string): Promise<LotteryBook> => {
-    const response = await api.post(`/lottery/books/${bookId}/activate`);
+  activateBook: async (bookNumber: string, storeId: string): Promise<LotteryBook> => {
+    const response = await api.post('/lottery/books/activate', { bookNumber, storeId });
     return response.data;
   },
 
   // Return a lottery book
-  returnBook: async (bookId: string): Promise<LotteryBook> => {
-    const response = await api.post(`/lottery/books/${bookId}/return`);
+  returnBook: async (bookNumber: string, storeId: string): Promise<LotteryBook> => {
+    const response = await api.post('/lottery/books/return', { bookNumber, storeId });
     return response.data;
   },
 

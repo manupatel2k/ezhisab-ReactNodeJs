@@ -65,8 +65,14 @@ export const lotteryService = {
   },
 
   // Activate lottery book
-  activateBook: async (storeId: string, bookNumber: string) => {
+  activateBook: async (storeId: string, bookNumber: string, userId?: string) => {
     try {
+      // Validate book number format: XXX-XXXXXX-X
+      const bookNumberRegex = /^\d{3}-\d{6}-\d{1}$/;
+      if (!bookNumberRegex.test(bookNumber)) {
+        throw new AppError(400, 'Invalid book number format. Expected format: XXX-XXXXXX-X', 'INVALID_BOOK_NUMBER');
+      }
+
       // Parse book number format: XXX-XXXXXX-X
       const [gameNumber, bookNum, referenceNumber] = bookNumber.split('-');
       
@@ -91,33 +97,69 @@ export const lotteryService = {
         }
       });
 
+      // If book exists and is already activated, throw an error
+      if (inventory && inventory.status === 'activated') {
+        throw new AppError(409, 'This book is already activated', 'BOOK_ALREADY_ACTIVATED');
+      }
+
+      let oldValues = null;
+      let newValues = null;
+
       if (!inventory) {
         // Create new inventory entry if book doesn't exist
+        oldValues = null;
+        newValues = {
+          storeId,
+          gameId: game.id,
+          bookNumber: bookNum,
+          referenceNumber,
+          status: 'activated'
+        };
+
         inventory = await prisma.lotteryInventory.create({
-          data: {
-            storeId,
-            gameId: game.id,
-            bookNumber: bookNum,
-            referenceNumber,
-            status: 'activated'
-          },
+          data: newValues,
           include: {
             game: true
           }
         });
       } else {
         // Update existing inventory entry
+        oldValues = {
+          status: inventory.status,
+          referenceNumber: inventory.referenceNumber
+        };
+        newValues = {
+          status: 'activated',
+          referenceNumber
+        };
+
         inventory = await prisma.lotteryInventory.update({
           where: { id: inventory.id },
-          data: {
-            status: 'activated',
-            referenceNumber
-          },
+          data: newValues,
           include: {
             game: true
           }
         });
       }
+
+      // Create audit log entry
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          entityType: 'lottery_inventory',
+          entityId: inventory.id,
+          actionTypeId: 'ACTIVATE_BOOK',
+          oldValues: oldValues ? JSON.stringify(oldValues) : null,
+          newValues: JSON.stringify(newValues),
+          metadata: JSON.stringify({
+            gameNumber,
+            gameName: game.gameName,
+            bookNumber: bookNum,
+            referenceNumber,
+            storeId
+          })
+        }
+      });
 
       return inventory;
     } catch (error) {
@@ -127,13 +169,28 @@ export const lotteryService = {
   },
 
   // Return lottery book
-  returnBook: async (storeId: string, bookNumber: string) => {
+  returnBook: async (storeId: string, bookNumber: string, userId?: string) => {
     try {
+      // Validate book number format: XXX-XXXXXX-X
+      const bookNumberRegex = /^\d{3}-\d{6}-\d{1}$/;
+      if (!bookNumberRegex.test(bookNumber)) {
+        throw new AppError(400, 'Invalid book number format. Expected format: XXX-XXXXXX-X', 'INVALID_BOOK_NUMBER');
+      }
+
+      // Parse book number format: XXX-XXXXXX-X
+      const [gameNumber, bookNum] = bookNumber.split('-');
+
       const inventory = await prisma.lotteryInventory.findFirst({
         where: {
           storeId,
-          bookNumber,
+          game: {
+            gameNumber
+          },
+          bookNumber: bookNum,
           status: 'activated'
+        },
+        include: {
+          game: true
         }
       });
 
@@ -141,13 +198,37 @@ export const lotteryService = {
         throw new AppError(404, 'Active book not found', 'BOOK_NOT_FOUND');
       }
 
-      return await prisma.lotteryInventory.update({
+      const oldValues = {
+        status: inventory.status
+      };
+
+      const updatedInventory = await prisma.lotteryInventory.update({
         where: { id: inventory.id },
         data: { status: 'returned' },
         include: {
           game: true
         }
       });
+
+      // Create audit log entry
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          entityType: 'lottery_inventory',
+          entityId: inventory.id,
+          actionTypeId: 'RETURN_BOOK',
+          oldValues: JSON.stringify(oldValues),
+          newValues: JSON.stringify({ status: 'returned' }),
+          metadata: JSON.stringify({
+            gameNumber,
+            gameName: inventory.game.gameName,
+            bookNumber: bookNum,
+            storeId
+          })
+        }
+      });
+
+      return updatedInventory;
     } catch (error) {
       console.error('Error returning lottery book:', error);
       throw error;

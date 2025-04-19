@@ -1,682 +1,640 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Tab } from '@headlessui/react';
-import { format } from 'date-fns';
-import { TrashIcon } from '@heroicons/react/24/outline';
-import { useApi } from '../../hooks/useApi';
-import { Store, DailyReport } from '../../types';
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Save, RefreshCw, AlertCircle, History } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+import { lotteryAPI, auditAPI } from '@/lib/api';
+import DailyLotteryReport from '../DailyLotteryReport';
+import LotteryTicketScan from '../LotteryTicketScan';
+import LotteryActivatedBooks from '../LotteryActivatedBooks';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useAuth } from '@/hooks/use-auth';
 
 interface LotteryReportProps {
-  selectedStore: Store | null;
-  dailyReport: DailyReport | null;
-  reportDate: Date;
-  onDataChange: (data: any) => void;
+  date: string;
+  storeId: string;
 }
 
-interface LotteryData {
-  todayOnlineNetSales: number;
-  todayOnlineCashing: number;
-  todayInstantCashing: number;
-  todayInstantSaleSr34: number;
-  yesterdayOnlineNetSales: number;
-  yesterdayOnlineCashing: number;
-  yesterdayInstantCashing: number;
-  totalOnlineBalance: number;
-  creditSales: number;
-  debitSales: number;
-  registerCash: number;
-  overShort: number;
-  notes?: string;
+interface LotteryReportData {
+  dailyReport: {
+    todayInvoice: {
+      onlineNetSales: number;
+      onlineCashing: number;
+      instantCashing: number;
+      instantSaleSr34: number;
+    };
+    yesterdayInvoice: {
+      onlineNetSales: number;
+      onlineCashing: number;
+      instantCashing: number;
+    };
+    todayCash: {
+      totalOnlineBalance: number;
+      creditSales: number;
+      debitSales: number;
+      registerCash: number;
+      overShort: number;
+    };
+  };
+  scannedTickets: Array<{
+    id: string;
+    price: string;
+    gameName: string;
+    gameNumber: string;
+    bookNumber: string;
+    status: string;
+    activatedOn: string;
+    overAllTickets: string;
+    shiftStartedTicket: string;
+    currentTicket: string;
+    quantitySold: number;
+    total: string;
+  }>;
+  activatedBooks: Array<{
+    id: string;
+    gameName: string;
+    gameNumber: string;
+    bookNumber: string;
+    referenceNumber: string;
+    status: string;
+  }>;
 }
 
-interface ActivationData {
-  gameNumber: string;
-  bookNumber: string;
-  referenceNumber: string;
-  ticketNumber: string;
+interface ApiError {
+  message: string;
+  code?: string;
+  details?: any;
 }
 
-interface ScannedTicket {
-  id: string;
-  gameId: string;
-  bookNumber: string;
-  ticketNumber: string;
-  gameName: string;
-  gamePrice: number;
-  totalTickets: number;
-  status: string;
-  activatedOn: string;
-  shiftStartTicket: string;
-  currentTicket: string;
-  quantitySold: number;
-  total: number;
-}
-
-export const LotteryReport: React.FC<LotteryReportProps> = ({
-  selectedStore,
-  dailyReport,
-  reportDate,
-  onDataChange
-}) => {
-  const api = useApi();
-
-  // State
-  const [lotteryData, setLotteryData] = useState<LotteryData>({
-    todayOnlineNetSales: 0,
-    todayOnlineCashing: 0,
-    todayInstantCashing: 0,
-    todayInstantSaleSr34: 0,
-    yesterdayOnlineNetSales: 0,
-    yesterdayOnlineCashing: 0,
-    yesterdayInstantCashing: 0,
-    totalOnlineBalance: 0,
-    creditSales: 0,
-    debitSales: 0,
-    registerCash: 0,
-    overShort: 0
+const LotteryReport: React.FC<LotteryReportProps> = ({ date, storeId }) => {
+  const [activeTab, setActiveTab] = useState('daily');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiError | null>(null);
+  const [reportData, setReportData] = useState<LotteryReportData>({
+    dailyReport: {
+      todayInvoice: {
+        onlineNetSales: 0,
+        onlineCashing: 0,
+        instantCashing: 0,
+        instantSaleSr34: 0,
+      },
+      yesterdayInvoice: {
+        onlineNetSales: 0,
+        onlineCashing: 0,
+        instantCashing: 0,
+      },
+      todayCash: {
+        totalOnlineBalance: 0,
+        creditSales: 0,
+        debitSales: 0,
+        registerCash: 0,
+        overShort: 0,
+      },
+    },
+    scannedTickets: [],
+    activatedBooks: [],
   });
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const { user } = useAuth();
 
-  const [activationData, setActivationData] = useState<ActivationData>({
-    gameNumber: '',
-    bookNumber: '',
-    referenceNumber: '',
-    ticketNumber: ''
-  });
-
-  const [scanInput, setScanInput] = useState('');
-  const [lastScannedTicket, setLastScannedTicket] = useState('');
-  const [scannedTickets, setScannedTickets] = useState<ScannedTicket[]>([]);
-  const [activatedBooks, setActivatedBooks] = useState<any[]>([]);
-  const [returnedBooks, setReturnedBooks] = useState<any[]>([]);
-
-  // Load previous day's data
+  // Load report data when date or store changes
   useEffect(() => {
-    const loadPreviousDayData = async () => {
-      if (!selectedStore?.id) return;
-
+    const loadReportData = async () => {
+      setIsLoading(true);
+      setError(null);
+      setApiError(null);
+      
       try {
-        const response = await api.get(
-          `/lottery/previous-data/${selectedStore.id}?date=${format(reportDate, 'yyyy-MM-dd')}`
-        );
-
-        setLotteryData(prev => ({
-          ...prev,
-          yesterdayOnlineNetSales: response.onlineNetSales,
-          yesterdayOnlineCashing: response.onlineCashing,
-          yesterdayInstantCashing: response.instantCashing
-        }));
-      } catch (error) {
-        console.error('Error loading previous day data:', error);
+        // Load daily report data
+        const dailyReportResponse = await lotteryAPI.getDailyReport(date, storeId);
+        
+        // Load scanned tickets
+        const ticketsResponse = await lotteryAPI.getAllTickets(date, date);
+        
+        // Load activated books
+        const booksResponse = await lotteryAPI.getBooks({ status: 'active' });
+        
+        setReportData({
+          dailyReport: dailyReportResponse.data,
+          scannedTickets: ticketsResponse.data,
+          activatedBooks: booksResponse.data,
+        });
+      } catch (err: any) {
+        console.error('Error loading report data:', err);
+        
+        // Handle specific API error cases
+        if (err.response) {
+          const status = err.response.status;
+          const errorData = err.response.data;
+          
+          if (status === 404) {
+            setError('No report data found for the selected date and store');
+            setApiError({
+              message: 'Report not found',
+              code: 'REPORT_NOT_FOUND',
+              details: errorData
+            });
+          } else if (status === 403) {
+            setError('You do not have permission to access this report');
+            setApiError({
+              message: 'Permission denied',
+              code: 'PERMISSION_DENIED',
+              details: errorData
+            });
+          } else if (status === 500) {
+            setError('Server error occurred while loading report data');
+            setApiError({
+              message: 'Server error',
+              code: 'SERVER_ERROR',
+              details: errorData
+            });
+          } else {
+            setError('Failed to load report data');
+            setApiError({
+              message: errorData.message || 'Unknown error',
+              code: errorData.code || 'UNKNOWN_ERROR',
+              details: errorData
+            });
+          }
+        } else if (err.request) {
+          // Network error
+          setError('Network error occurred. Please check your connection');
+          setApiError({
+            message: 'Network error',
+            code: 'NETWORK_ERROR',
+            details: err.message
+          });
+        } else {
+          // Other errors
+          setError('An unexpected error occurred');
+          setApiError({
+            message: err.message || 'Unexpected error',
+            code: 'UNEXPECTED_ERROR',
+            details: err
+          });
+        }
+        
+        toast({
+          title: 'Error',
+          description: error || 'Failed to load lottery report data',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    loadPreviousDayData();
-  }, [selectedStore?.id, reportDate]);
+    loadReportData();
+  }, [date, storeId]);
 
-  // Load existing lottery data
-  useEffect(() => {
-    if (dailyReport?.lottery) {
-      setLotteryData(dailyReport.lottery);
-    }
-  }, [dailyReport]);
-
-  // Calculate lottery balances
-  const calculateLotteryBalances = useCallback(() => {
-    const onlineSalesDifference = 
-      lotteryData.todayOnlineNetSales - 
-      lotteryData.yesterdayOnlineNetSales;
-
-    const onlineCashingDifference = 
-      lotteryData.todayOnlineCashing - 
-      lotteryData.yesterdayOnlineCashing;
-
-    const instantCashingDifference = 
-      lotteryData.todayInstantCashing - 
-      lotteryData.yesterdayInstantCashing;
-
-    // Calculate Instant Sale SR34 (sum of all scanned tickets)
-    const instantSaleSr34 = scannedTickets.reduce((sum, ticket) => sum + ticket.total, 0);
-
-    // Calculate Total Online Balance
-    const totalOnlineBalance = 
-      onlineSalesDifference - 
-      onlineCashingDifference - 
-      instantCashingDifference + 
-      instantSaleSr34;
-
-    // Calculate Over/Short
-    const overShort = lotteryData.registerCash - totalOnlineBalance;
-
-    return {
-      totalOnlineBalance,
-      overShort,
-      instantSaleSr34
-    };
-  }, [lotteryData, scannedTickets]);
-
-  // Update balances when data changes
-  useEffect(() => {
-    const balances = calculateLotteryBalances();
-    setLotteryData(prev => ({
-      ...prev,
-      totalOnlineBalance: balances.totalOnlineBalance,
-      overShort: balances.overShort,
-      todayInstantSaleSr34: balances.instantSaleSr34
-    }));
-  }, [calculateLotteryBalances]);
-
-  // Handle data changes
-  const handleDataChange = (field: keyof LotteryData) => (
-    event: React.ChangeEvent<HTMLInputElement>
+  // Function to log data changes
+  const logDataChange = async (
+    entityType: string,
+    actionType: string,
+    oldValues: any,
+    newValues: any,
+    metadata?: any
   ) => {
-    const value = Number(event.target.value);
-    setLotteryData(prev => {
-      const updated = {
-        ...prev,
-        [field]: value
-      };
-      onDataChange(updated);
-      return updated;
+    try {
+      await auditAPI.create({
+        userId: user?.id,
+        entityType,
+        entityId: `${storeId}-${date}`,
+        actionTypeId: actionType,
+        oldValues,
+        newValues,
+        metadata: {
+          ...metadata,
+          storeId,
+          date,
+          timestamp: new Date().toISOString(),
+        }
+      });
+    } catch (err) {
+      console.error('Failed to create audit log:', err);
+    }
+  };
+
+  // Function to fetch audit logs
+  const fetchAuditLogs = async () => {
+    try {
+      const response = await auditAPI.getAll({
+        entityType: 'lottery_report',
+        entityId: `${storeId}-${date}`,
+      });
+      setAuditLogs(response.data);
+    } catch (err) {
+      console.error('Failed to fetch audit logs:', err);
+    }
+  };
+
+  // Load audit logs when showing the audit log
+  useEffect(() => {
+    if (showAuditLog) {
+      fetchAuditLogs();
+    }
+  }, [showAuditLog, storeId, date]);
+
+  const handleSaveReport = async () => {
+    setIsSaving(true);
+    setApiError(null);
+    
+    try {
+      // Log the save action
+      await logDataChange(
+        'lottery_report',
+        'SAVE_REPORT',
+        null,
+        reportData,
+        { action: 'save_report' }
+      );
+      
+      await lotteryAPI.saveReport({
+        date,
+        storeId,
+        data: reportData,
+      });
+      
+      toast({
+        title: 'Success',
+        description: 'Lottery report saved successfully',
+      });
+    } catch (err: any) {
+      console.error('Error saving report:', err);
+      
+      // Handle specific API error cases
+      if (err.response) {
+        const status = err.response.status;
+        const errorData = err.response.data;
+        
+        if (status === 400) {
+          setApiError({
+            message: 'Invalid report data',
+            code: 'INVALID_DATA',
+            details: errorData
+          });
+          toast({
+            title: 'Error',
+            description: 'Invalid report data. Please check your inputs.',
+            variant: 'destructive',
+          });
+        } else if (status === 403) {
+          setApiError({
+            message: 'Permission denied',
+            code: 'PERMISSION_DENIED',
+            details: errorData
+          });
+          toast({
+            title: 'Error',
+            description: 'You do not have permission to save this report',
+            variant: 'destructive',
+          });
+        } else if (status === 409) {
+          setApiError({
+            message: 'Report already exists',
+            code: 'REPORT_EXISTS',
+            details: errorData
+          });
+          toast({
+            title: 'Error',
+            description: 'A report for this date already exists',
+            variant: 'destructive',
+          });
+        } else {
+          setApiError({
+            message: errorData.message || 'Unknown error',
+            code: errorData.code || 'UNKNOWN_ERROR',
+            details: errorData
+          });
+          toast({
+            title: 'Error',
+            description: 'Failed to save lottery report',
+            variant: 'destructive',
+          });
+        }
+      } else {
+        setApiError({
+          message: err.message || 'Unexpected error',
+          code: 'UNEXPECTED_ERROR',
+          details: err
+        });
+        toast({
+          title: 'Error',
+          description: 'Failed to save lottery report',
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleClearReport = () => {
+    // Log the clear action
+    logDataChange(
+      'lottery_report',
+      'CLEAR_REPORT',
+      reportData,
+      {
+        dailyReport: {
+          todayInvoice: {
+            onlineNetSales: 0,
+            onlineCashing: 0,
+            instantCashing: 0,
+            instantSaleSr34: 0,
+          },
+          yesterdayInvoice: {
+            onlineNetSales: 0,
+            onlineCashing: 0,
+            instantCashing: 0,
+          },
+          todayCash: {
+            totalOnlineBalance: 0,
+            creditSales: 0,
+            debitSales: 0,
+            registerCash: 0,
+            overShort: 0,
+          },
+        },
+        scannedTickets: [],
+        activatedBooks: [],
+      },
+      { action: 'clear_report' }
+    );
+    
+    setReportData({
+      dailyReport: {
+        todayInvoice: {
+          onlineNetSales: 0,
+          onlineCashing: 0,
+          instantCashing: 0,
+          instantSaleSr34: 0,
+        },
+        yesterdayInvoice: {
+          onlineNetSales: 0,
+          onlineCashing: 0,
+          instantCashing: 0,
+        },
+        todayCash: {
+          totalOnlineBalance: 0,
+          creditSales: 0,
+          debitSales: 0,
+          registerCash: 0,
+          overShort: 0,
+        },
+      },
+      scannedTickets: [],
+      activatedBooks: [],
+    });
+    
+    toast({
+      title: 'Report Cleared',
+      description: 'Lottery report has been cleared',
     });
   };
 
-  // Handle book activation
-  const handleActivateBook = async (bookNumber: string) => {
-    if (!selectedStore?.id || !bookNumber) return;
-
-    try {
-      const response = await api.post('/lottery/books/activate', {
-        storeId: selectedStore.id,
-        bookNumber
-      });
-
-      setActivatedBooks(prev => [...prev, response]);
-      setActivationData({ gameNumber: '', bookNumber: '', referenceNumber: '', ticketNumber: '' });
-    } catch (error) {
-      console.error('Error activating book:', error);
-    }
-  };
-
-  // Handle book return
-  const handleReturnBook = async (bookNumber: string) => {
-    if (!selectedStore?.id || !bookNumber) return;
-
-    try {
-      const response = await api.post('/lottery/books/return', {
-        storeId: selectedStore.id,
-        bookNumber
-      });
-
-      setActivatedBooks(prev => prev.filter(book => book.bookNumber !== bookNumber));
-      setReturnedBooks(prev => [...prev, response]);
-    } catch (error) {
-      console.error('Error returning book:', error);
-    }
-  };
-
-  // Handle ticket scan
-  const handleTicketScan = async (ticketNumber: string) => {
-    if (!dailyReport?.id || !ticketNumber) return;
-
-    try {
-      const response = await api.post('/lottery/tickets/scan', {
-        dailyReportId: dailyReport.id,
-        ticketNumber
-      });
-
-      setScannedTickets(prev => [...prev, response]);
-      setLastScannedTicket(ticketNumber);
-    } catch (error) {
-      console.error('Error scanning ticket:', error);
-    }
-  };
-
-  // Preprocess ticket number
-  const preprocessTicketNumber = (input: string): string => {
-    // Remove any non-digit characters
-    const digits = input.replace(/\D/g, '');
+  // Handle data changes from child components with audit logging
+  const handleDailyReportChange = (newData: any) => {
+    logDataChange(
+      'lottery_report',
+      'UPDATE_DAILY_REPORT',
+      reportData.dailyReport,
+      newData,
+      { action: 'update_daily_report' }
+    );
     
-    // Format as XXX-XXXXXX-XXX
-    if (digits.length >= 12) {
-      const gameNumber = digits.slice(0, 3);
-      const bookNumber = digits.slice(3, 9);
-      const ticketNumber = digits.slice(9, 12);
-      return `${gameNumber}-${bookNumber}-${ticketNumber}`;
-    }
-    
-    return input;
+    setReportData(prev => ({
+      ...prev,
+      dailyReport: newData,
+    }));
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Lottery Data Entry Section */}
-      <div className="bg-white p-4 rounded-lg shadow">
-        <h2 className="font-semibold mb-4">Lottery Report</h2>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <h3 className="font-medium mb-2">Today's Numbers</h3>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span>Online Net Sales</span>
-                <input
-                  type="number"
-                  className="border rounded px-2 py-1 w-32"
-                  value={lotteryData.todayOnlineNetSales}
-                  onChange={handleDataChange('todayOnlineNetSales')}
-                />
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Online Cashing</span>
-                <input
-                  type="number"
-                  className="border rounded px-2 py-1 w-32"
-                  value={lotteryData.todayOnlineCashing}
-                  onChange={handleDataChange('todayOnlineCashing')}
-                />
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Instant Cashing</span>
-                <input
-                  type="number"
-                  className="border rounded px-2 py-1 w-32"
-                  value={lotteryData.todayInstantCashing}
-                  onChange={handleDataChange('todayInstantCashing')}
-                />
-              </div>
-            </div>
-          </div>
+  const handleTicketsChange = (newTickets: any) => {
+    logDataChange(
+      'lottery_report',
+      'UPDATE_TICKETS',
+      reportData.scannedTickets,
+      newTickets,
+      { action: 'update_tickets' }
+    );
+    
+    setReportData(prev => ({
+      ...prev,
+      scannedTickets: newTickets,
+    }));
+  };
 
-          <div>
-            <h3 className="font-medium mb-2">Yesterday's Numbers</h3>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <span>Online Net Sales</span>
-                <input
-                  type="number"
-                  className="border rounded px-2 py-1 w-32"
-                  value={lotteryData.yesterdayOnlineNetSales}
-                  onChange={handleDataChange('yesterdayOnlineNetSales')}
-                />
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Online Cashing</span>
-                <input
-                  type="number"
-                  className="border rounded px-2 py-1 w-32"
-                  value={lotteryData.yesterdayOnlineCashing}
-                  onChange={handleDataChange('yesterdayOnlineCashing')}
-                />
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Instant Cashing</span>
-                <input
-                  type="number"
-                  className="border rounded px-2 py-1 w-32"
-                  value={lotteryData.yesterdayInstantCashing}
-                  onChange={handleDataChange('yesterdayInstantCashing')}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+  const handleBooksChange = (newBooks: any) => {
+    logDataChange(
+      'lottery_report',
+      'UPDATE_BOOKS',
+      reportData.activatedBooks,
+      newBooks,
+      { action: 'update_books' }
+    );
+    
+    setReportData(prev => ({
+      ...prev,
+      activatedBooks: newBooks,
+    }));
+  };
 
-        <div className="mt-6">
-          <h3 className="font-medium mb-2">Today Cash</h3>
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <span>Total Online Balance</span>
-              <input
-                type="number"
-                className="border rounded px-2 py-1 w-32 bg-gray-100"
-                value={lotteryData.totalOnlineBalance}
-                readOnly
-              />
-            </div>
-            <div className="flex justify-between items-center">
-              <span>Credit Sales</span>
-              <input
-                type="number"
-                className="border rounded px-2 py-1 w-32"
-                value={lotteryData.creditSales}
-                onChange={handleDataChange('creditSales')}
-              />
-            </div>
-            <div className="flex justify-between items-center">
-              <span>Debit Sales</span>
-              <input
-                type="number"
-                className="border rounded px-2 py-1 w-32"
-                value={lotteryData.debitSales}
-                onChange={handleDataChange('debitSales')}
-              />
-            </div>
-            <div className="flex justify-between items-center">
-              <span>Register Cash</span>
-              <input
-                type="number"
-                className="border rounded px-2 py-1 w-32"
-                value={lotteryData.registerCash}
-                onChange={handleDataChange('registerCash')}
-              />
-            </div>
-            <div className="flex justify-between items-center">
-              <span>Over/Short</span>
-              <input
-                type="number"
-                className="border rounded px-2 py-1 w-32 bg-gray-100"
-                value={lotteryData.overShort}
-                readOnly
-              />
-            </div>
-          </div>
+  // Loading skeleton for the report content
+  const renderLoadingSkeleton = () => (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <Skeleton className="h-8 w-48" />
+        <div className="flex gap-2">
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-24" />
         </div>
       </div>
-
-      {/* Lottery Book Management Section */}
-      <div className="bg-white p-4 rounded-lg shadow">
-        <h2 className="font-semibold mb-4">Lottery Book Management</h2>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <h3 className="font-medium mb-2">Scan Code and Activate</h3>
-            <div className="flex items-center space-x-2">
-              <input
-                type="text"
-                placeholder="Scan Book Number"
-                value={activationData.bookNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, bookNumber: e.target.value }))}
-                onKeyPress={e => {
-                  if (e.key === 'Enter') {
-                    handleActivateBook(activationData.bookNumber);
-                  }
-                }}
-                className="border rounded px-2 py-1 flex-1"
-              />
-              <button 
-                onClick={() => handleActivateBook(activationData.bookNumber)}
-                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Activate
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="font-medium mb-2">Manual Activation</h3>
-            <div className="space-y-2">
-              <input
-                type="text"
-                placeholder="Game Number (XXX)"
-                value={activationData.gameNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, gameNumber: e.target.value }))}
-                className="border rounded px-2 py-1 w-full"
-              />
-              <input
-                type="text"
-                placeholder="Book Number (XXXXXX)"
-                value={activationData.bookNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, bookNumber: e.target.value }))}
-                className="border rounded px-2 py-1 w-full"
-              />
-              <input
-                type="text"
-                placeholder="Reference Number (X)"
-                value={activationData.referenceNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, referenceNumber: e.target.value }))}
-                className="border rounded px-2 py-1 w-full"
-              />
-              <button 
-                onClick={() => {
-                  const bookNumber = `${activationData.gameNumber}-${activationData.bookNumber}-${activationData.referenceNumber || '0'}`;
-                  handleActivateBook(bookNumber);
-                }}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Activate
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <Tab.Group>
-            <Tab.List className="flex space-x-1 rounded-xl bg-blue-900/20 p-1">
-              <Tab
-                className={({ selected }) =>
-                  `w-full rounded-lg py-2.5 text-sm font-medium leading-5
-                  ${selected
-                    ? 'bg-white text-blue-700 shadow'
-                    : 'text-gray-600 hover:bg-white/[0.12] hover:text-blue-600'
-                  }`
-                }
-              >
-                Activated Books
-              </Tab>
-              <Tab
-                className={({ selected }) =>
-                  `w-full rounded-lg py-2.5 text-sm font-medium leading-5
-                  ${selected
-                    ? 'bg-white text-blue-700 shadow'
-                    : 'text-gray-600 hover:bg-white/[0.12] hover:text-blue-600'
-                  }`
-                }
-              >
-                Returned Books
-              </Tab>
-            </Tab.List>
-            <Tab.Panels className="mt-4">
-              <Tab.Panel>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-2">No</th>
-                        <th className="text-left py-2">Game Name</th>
-                        <th className="text-left py-2">Game Number</th>
-                        <th className="text-left py-2">Book Number</th>
-                        <th className="text-left py-2">Reference</th>
-                        <th className="text-center py-2">Status</th>
-                        <th className="text-center py-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activatedBooks.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="text-center py-4 text-gray-500">
-                            No data available
-                          </td>
-                        </tr>
-                      ) : (
-                        activatedBooks.map((book, index) => (
-                          <tr key={book.id} className="border-b">
-                            <td>{index + 1}</td>
-                            <td>{book.game.gameName}</td>
-                            <td>{book.game.gameNumber}</td>
-                            <td>{book.bookNumber}</td>
-                            <td>{book.referenceNumber || '-'}</td>
-                            <td className="text-center capitalize">{book.status}</td>
-                            <td className="text-center">
-                              <button
-                                onClick={() => handleReturnBook(book.bookNumber)}
-                                className="text-red-600 hover:text-red-800"
-                              >
-                                Return
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </Tab.Panel>
-              <Tab.Panel>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-2">No</th>
-                        <th className="text-left py-2">Game Name</th>
-                        <th className="text-left py-2">Game Number</th>
-                        <th className="text-left py-2">Book Number</th>
-                        <th className="text-left py-2">Reference</th>
-                        <th className="text-center py-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {returnedBooks.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="text-center py-4 text-gray-500">
-                            No returned books
-                          </td>
-                        </tr>
-                      ) : (
-                        returnedBooks.map((book, index) => (
-                          <tr key={book.id} className="border-b">
-                            <td>{index + 1}</td>
-                            <td>{book.game.gameName}</td>
-                            <td>{book.game.gameNumber}</td>
-                            <td>{book.bookNumber}</td>
-                            <td>{book.referenceNumber || '-'}</td>
-                            <td className="text-center capitalize">{book.status}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </Tab.Panel>
-            </Tab.Panels>
-          </Tab.Group>
-        </div>
+      
+      <div className="space-y-2">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
       </div>
-
-      {/* Lottery Ticket Scanning Section */}
-      <div className="bg-white p-4 rounded-lg shadow">
-        <h2 className="font-semibold mb-4">Lottery Ticket Scanning</h2>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <h3 className="font-medium mb-2">Scan Code Here</h3>
-            <div className="flex items-center space-x-2">
-              <input
-                type="text"
-                placeholder="Scan Number"
-                value={scanInput}
-                onChange={(e) => {
-                  const input = e.target.value;
-                  // If input is complete (has enough digits), auto-process it
-                  if (input.replace(/\D/g, '').length >= 12) {
-                    const formattedInput = preprocessTicketNumber(input);
-                    setScanInput(''); // Clear input immediately
-                    handleTicketScan(formattedInput);
-                  } else {
-                    setScanInput(input);
-                  }
-                }}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && scanInput) {
-                    const formattedInput = preprocessTicketNumber(scanInput);
-                    setScanInput(''); // Clear input after processing
-                    handleTicketScan(formattedInput);
-                  }
-                }}
-                className="border rounded px-2 py-1 flex-1"
-                autoFocus
-              />
-            </div>
-          </div>
-
-          <div>
-            <h3 className="font-medium mb-2">Manual Entry</h3>
-            <div className="space-y-2">
-              <input
-                type="text"
-                placeholder="Game Number"
-                value={activationData.gameNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, gameNumber: e.target.value }))}
-                className="border rounded px-2 py-1 w-full"
-              />
-              <input
-                type="text"
-                placeholder="Book Number"
-                value={activationData.bookNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, bookNumber: e.target.value }))}
-                className="border rounded px-2 py-1 w-full"
-              />
-              <input
-                type="text"
-                placeholder="Ticket Number"
-                value={activationData.ticketNumber}
-                onChange={e => setActivationData(prev => ({ ...prev, ticketNumber: e.target.value }))}
-                className="border rounded px-2 py-1 w-full"
-              />
-              <button 
-                onClick={() => {
-                  const ticketNumber = `${activationData.gameNumber}-${activationData.bookNumber}-${activationData.ticketNumber}`;
-                  handleTicketScan(ticketNumber);
-                  setActivationData(prev => ({ ...prev, gameNumber: '', bookNumber: '', ticketNumber: '' }));
-                }}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Scan
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="font-medium">Scanned Tickets</h3>
-            <span className="text-sm text-gray-500">
-              Count: ({scannedTickets.length}) Last Ticket: {lastScannedTicket}
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left py-2">No</th>
-                  <th className="text-left py-2">Game Price</th>
-                  <th className="text-left py-2">Game Name</th>
-                  <th className="text-left py-2">Game Number</th>
-                  <th className="text-left py-2">Book Number</th>
-                  <th className="text-center py-2">Status</th>
-                  <th className="text-center py-2">Activated On</th>
-                  <th className="text-right py-2">Total Tickets</th>
-                  <th className="text-right py-2">Start Ticket</th>
-                  <th className="text-right py-2">Current Ticket</th>
-                  <th className="text-right py-2">Quantity Sold</th>
-                  <th className="text-right py-2">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scannedTickets.length === 0 ? (
-                  <tr>
-                    <td colSpan={12} className="text-center py-4 text-gray-500">
-                      No data available
-                    </td>
-                  </tr>
-                ) : (
-                  scannedTickets.map((ticket, index) => (
-                    <tr key={ticket.id} className="border-b">
-                      <td>{index + 1}</td>
-                      <td>${ticket.gamePrice.toFixed(2)}</td>
-                      <td>{ticket.gameName}</td>
-                      <td>{ticket.gameId}</td>
-                      <td>{ticket.bookNumber}</td>
-                      <td className="text-center capitalize">{ticket.status}</td>
-                      <td className="text-center">{new Date(ticket.activatedOn).toLocaleDateString()}</td>
-                      <td className="text-right">{ticket.totalTickets}</td>
-                      <td className="text-right">{ticket.shiftStartTicket}</td>
-                      <td className="text-right">{ticket.currentTicket}</td>
-                      <td className="text-right">{ticket.quantitySold}</td>
-                      <td className="text-right">${ticket.total.toFixed(2)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[1, 2, 3].map((i) => (
+          <Card key={i}>
+            <CardHeader>
+              <Skeleton className="h-6 w-32" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {[1, 2, 3, 4].map((j) => (
+                  <div key={j} className="flex justify-between items-center">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-8 w-24" />
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
   );
-}; 
+
+  // Render audit log dialog
+  const renderAuditLog = () => {
+    if (!showAuditLog) return null;
+    
+    return (
+      <Card className="mt-4">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Audit Log</CardTitle>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setShowAuditLog(false)}
+          >
+            Close
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {auditLogs.length === 0 ? (
+            <p className="text-muted-foreground">No audit logs found</p>
+          ) : (
+            <div className="space-y-2">
+              {auditLogs.map((log, index) => (
+                <div key={index} className="border rounded-md p-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="font-medium">{log.actionTypeId}</span>
+                    <span className="text-muted-foreground">
+                      {new Date(log.metadata.timestamp).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    User: {log.userId || 'Unknown'}
+                  </div>
+                  {log.metadata.action && (
+                    <div className="text-xs text-muted-foreground">
+                      Action: {log.metadata.action}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold">Lottery Report</h2>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setShowAuditLog(!showAuditLog)}
+            variant="outline"
+            className="mr-2"
+          >
+            <History className="h-4 w-4 mr-1" /> Audit Log
+          </Button>
+          <Button
+            onClick={handleSaveReport}
+            disabled={isLoading || isSaving}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            {isSaving ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> Saving...
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4 mr-1" /> Save Report
+              </>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={isLoading || isSaving}
+            onClick={handleClearReport}
+          >
+            <RefreshCw className="h-4 w-4 mr-1" /> Clear
+          </Button>
+        </div>
+      </div>
+
+      {apiError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {apiError.message}
+            {apiError.code && (
+              <span className="text-xs ml-2">(Error code: {apiError.code})</span>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        renderLoadingSkeleton()
+      ) : (
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList>
+            <TabsTrigger value="daily">Daily Report</TabsTrigger>
+            <TabsTrigger value="tickets">Ticket Scanning</TabsTrigger>
+            <TabsTrigger value="books">Activated Books</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="daily">
+            <Card>
+              <CardHeader>
+                <CardTitle>Daily Lottery Report</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <DailyLotteryReport 
+                  data={reportData.dailyReport}
+                  onDataChange={handleDailyReportChange}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="tickets">
+            <Card>
+              <CardHeader>
+                <CardTitle>Ticket Scanning</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <LotteryTicketScan 
+                  data={reportData.scannedTickets}
+                  onTicketsChange={handleTicketsChange}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="books">
+            <Card>
+              <CardHeader>
+                <CardTitle>Activated Books</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <LotteryActivatedBooks 
+                  data={reportData.activatedBooks}
+                  onBooksChange={handleBooksChange}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      )}
+      
+      {renderAuditLog()}
+    </div>
+  );
+};
+
+export default LotteryReport; 

@@ -18,8 +18,9 @@ export interface LotteryGame {
   id: string;
   gameNumber: string;
   gameName: string;
-  gamePrice: number;
-  totalTickets: number;
+  price: number;
+  ticketsPerBook: number;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,8 +44,8 @@ export interface ScannedTicket {
   bookNumber: string;
   ticketNumber: string;
   gameName: string;
-  gamePrice: number;
-  totalTickets: number;
+  price: number;
+  ticketsPerBook: number;
   status: string;
   activatedOn: string;
   shiftStartTicket: string;
