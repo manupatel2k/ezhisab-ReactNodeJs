@@ -39,7 +39,6 @@ const StoreHeader: React.FC = () => {
         </div>
         
         <div className="flex items-center gap-4">
-          <StoreSelector />
           <ThemeSelector />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

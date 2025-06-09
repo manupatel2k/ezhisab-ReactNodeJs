@@ -28,6 +28,7 @@ import { LotteryGame } from '@/types';
 interface LotteryGameDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialGameNumber?: string | null;
 }
 
 const formSchema = z.object({
@@ -41,11 +42,16 @@ const formSchema = z.object({
     (val) => (val === '' ? 0 : Number(val)),
     z.number().min(0, { message: "Tickets per book must be greater than or equal to 0" })
   ),
+  isActive: z.boolean().default(true),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
-const LotteryGameDialog: React.FC<LotteryGameDialogProps> = ({ open, onOpenChange }) => {
+const LotteryGameDialog: React.FC<LotteryGameDialogProps> = ({ 
+  open, 
+  onOpenChange,
+  initialGameNumber 
+}) => {
   const [games, setGames] = useState<LotteryGame[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -56,18 +62,26 @@ const LotteryGameDialog: React.FC<LotteryGameDialogProps> = ({ open, onOpenChang
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
-      number: '',
+      number: initialGameNumber || '',
       cost: 0,
       ticketsPerBook: 0,
-    },
+      isActive: true
+    }
   });
 
-  // Load games when dialog opens
+  // Reset form when dialog opens/closes or initialGameNumber changes
   useEffect(() => {
     if (open) {
+      form.reset({
+        name: '',
+        number: initialGameNumber || '',
+        cost: 0,
+        ticketsPerBook: 0,
+        isActive: true
+      });
       loadGames();
     }
-  }, [open]);
+  }, [open, initialGameNumber, form]);
 
   const loadGames = async () => {
     setIsLoading(true);
@@ -114,56 +128,37 @@ const LotteryGameDialog: React.FC<LotteryGameDialogProps> = ({ open, onOpenChang
     setError(null);
     
     try {
-      // Format data for API - using the exact field names expected by the API
-      const gameData = {
+      // Transform the form data to match API expectations
+      const apiData = {
         gameName: data.name,
         gameNumber: data.number,
-        price: Number(data.cost), // API expects 'price' not 'gamePrice'
-        ticketsPerBook: Number(data.ticketsPerBook), // API expects 'ticketsPerBook' not 'totalTickets'
-        isActive: true
+        price: data.cost,
+        ticketsPerBook: data.ticketsPerBook,
+        isActive: data.isActive
       };
-      
-      let response;
-      
-      if (editingId) {
-        // Update existing game
-        response = await lotteryAPI.updateGame(editingId, gameData);
-        toast.success('Game updated successfully!');
-      } else {
-        // Save new game to database
-        response = await lotteryAPI.createGame(gameData);
-        toast.success('Game added successfully!');
-      }
-      
-      // Force reload the entire games list to ensure we have the latest data
-      await loadGames();
-      
-      // Reset form and editing state
+
+      await lotteryAPI.createGame(apiData);
+      toast.success('Game added successfully');
+      onOpenChange(false);
       form.reset();
-      setEditingId(null);
-    } catch (err: unknown) {
-      console.error('Failed to save game:', err);
-      
-      // Handle specific error cases
-      if (err && typeof err === 'object' && 'response' in err) {
-        const errorResponse = err as { response?: { status?: number } };
-        if (errorResponse.response?.status === 409) {
-          setError('A game with this number already exists.');
-        } else if (errorResponse.response?.status === 403) {
-          setError('You do not have permission to manage games.');
-        } else {
-          setError('Failed to save game. Please try again.');
-        }
-      } else {
-        setError('Failed to save game. Please try again.');
-      }
+    } catch (error: any) {
+      console.error('Failed to add game:', error);
+      const errorMessage = error.response?.data?.message || 'Failed to add game. Please try again.';
+      toast.error(errorMessage);
     } finally {
       setIsSaving(false);
     }
   };
 
+  const handleClose = () => {
+    form.reset();
+    setError(null);
+    setEditingId(null);
+    onOpenChange(false);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Lottery Game Management</DialogTitle>

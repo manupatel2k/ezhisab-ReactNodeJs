@@ -33,7 +33,13 @@ authRoutes.post('/login', async (req, res, next) => {
     }
 
     const token = jwt.sign(
-      { userId: user.id, role: user.role },
+      { 
+        userId: user.id,
+        role: user.role,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName
+      },
       process.env.JWT_SECRET || 'your-super-secret-key',
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
@@ -85,7 +91,13 @@ authRoutes.post('/register', async (req, res, next) => {
     });
 
     const token = jwt.sign(
-      { userId: user.id, role: user.role },
+      { 
+        userId: user.id,
+        role: user.role,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName
+      },
       process.env.JWT_SECRET || 'your-super-secret-key',
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
@@ -108,22 +120,11 @@ authRoutes.post('/register', async (req, res, next) => {
 // Get current user
 authRoutes.get('/me', authenticate, async (req, res, next) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user?.id },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-      }
-    });
-
-    if (!user) {
+    if (!req.user) {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND');
     }
 
-    res.json(user);
+    res.json(req.user);
   } catch (error) {
     next(error);
   }

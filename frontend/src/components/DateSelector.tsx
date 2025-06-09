@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { format } from 'date-fns';
 import { Calendar as CalendarIcon } from 'lucide-react';
@@ -10,10 +9,21 @@ import { cn } from '@/lib/utils';
 interface DateSelectorProps {
   className?: string;
   showLabel?: boolean;
+  value?: Date;
+  onChange?: (date: Date) => void;
 }
 
-const DateSelector: React.FC<DateSelectorProps> = ({ className, showLabel = true }) => {
-  const [date, setDate] = React.useState<Date>(new Date());
+const DateSelector: React.FC<DateSelectorProps> = ({ 
+  className, 
+  showLabel = true,
+  value = new Date(),
+  onChange
+}) => {
+  const handleSelect = (newDate: Date | undefined) => {
+    if (newDate && onChange) {
+      onChange(newDate);
+    }
+  };
 
   return (
     <div className={cn("flex items-center", className)}>
@@ -28,14 +38,14 @@ const DateSelector: React.FC<DateSelectorProps> = ({ className, showLabel = true
             )}
           >
             <CalendarIcon className="mr-2 h-4 w-4" />
-            {date ? format(date, 'PPP') : <span>Pick a date</span>}
+            {value ? format(value, 'PPP') : <span>Pick a date</span>}
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="end">
           <Calendar
             mode="single"
-            selected={date}
-            onSelect={(newDate) => newDate && setDate(newDate)}
+            selected={value}
+            onSelect={handleSelect}
             initialFocus
             className="p-3 pointer-events-auto"
           />

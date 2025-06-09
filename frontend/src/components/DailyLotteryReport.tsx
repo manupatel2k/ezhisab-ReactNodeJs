@@ -9,7 +9,12 @@ interface LotteryReportItem {
   isCalculated?: boolean;
 }
 
-const DailyLotteryReport: React.FC = () => {
+interface DailyLotteryReportProps {
+  dailyReportId: string | null; // Accept dailyReportId prop
+  className?: string; // Add className prop
+}
+
+const DailyLotteryReport: React.FC<DailyLotteryReportProps> = ({ dailyReportId, className }) => {
   const [todayInvoice, setTodayInvoice] = useState<LotteryReportItem[]>([
     { label: "Online Net Sales", value: 0 },
     { label: "Online Cashing", value: 0 },
@@ -106,94 +111,83 @@ const DailyLotteryReport: React.FC = () => {
   };
 
   return (
-    <div className="bg-card p-4 rounded-md shadow border border-border">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-medium text-foreground">Daily Lottery Report</h2>
-        <div className="flex gap-2">
-          <Button 
-            onClick={handleSaveReport}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-            size="sm"
-          >
-            <Save className="h-4 w-4 mr-1" /> Save Report
-          </Button>
-          <Button 
-            onClick={handleClearReport}
-            variant="outline"
-            size="sm"
-          >
-            <RefreshCw className="h-4 w-4 mr-1" /> Clear
-          </Button>
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <h3 className="font-medium mb-3 text-foreground">Today Invoice</h3>
-          <div className="space-y-2">
-            {todayInvoice.map((item, index) => (
-              <div key={index} className="flex justify-between items-center">
-                <span className="text-foreground">{item.label}</span>
-                <input
-                  type="text"
-                  value={item.value}
-                  onChange={(e) => {
-                    if (!item.isCalculated) {
-                      handleValueChange('todayInvoice', index, Number(e.target.value) || 0);
-                    }
-                  }}
-                  disabled={item.isCalculated}
-                  className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
-                    ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
-                />
-              </div>
-            ))}
+    <div className={`bg-card rounded-md shadow mt-4 border border-border ${className}`}>
+      <div className="bg-card p-4 rounded-md shadow border border-border">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-medium text-foreground">Daily Lottery Report</h2>
+          <div className="flex gap-2">
+
           </div>
         </div>
-
-        <div>
-          <h3 className="font-medium mb-3 text-foreground">Yesterday Invoice</h3>
-          <div className="space-y-2">
-            {yesterdayInvoice.map((item, index) => (
-              <div key={index} className="flex justify-between items-center">
-                <span className="text-foreground">{item.label}</span>
-                <input
-                  type="text"
-                  value={item.value}
-                  onChange={(e) => {
-                    if (!item.isCalculated) {
-                      handleValueChange('yesterdayInvoice', index, Number(e.target.value) || 0);
-                    }
-                  }}
-                  disabled={item.isCalculated}
-                  className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
-                    ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
-                />
-              </div>
-            ))}
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <h3 className="font-medium mb-3 text-foreground">Today Invoice</h3>
+            <div className="space-y-2">
+              {todayInvoice.map((item, index) => (
+                <div key={index} className="flex justify-between items-center">
+                  <span className="text-foreground">{item.label}</span>
+                  <input
+                    type="text"
+                    value={item.value}
+                    onChange={(e) => {
+                      if (!item.isCalculated) {
+                        handleValueChange('todayInvoice', index, Number(e.target.value) || 0);
+                      }
+                    }}
+                    disabled={item.isCalculated}
+                    className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
+                      ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div>
-          <h3 className="font-medium mb-3 text-foreground">Today Cash</h3>
-          <div className="space-y-2">
-            {todayCash.map((item, index) => (
-              <div key={index} className="flex justify-between items-center">
-                <span className="text-foreground">{item.label}</span>
-                <input
-                  type="text"
-                  value={item.value}
-                  onChange={(e) => {
-                    if (!item.isCalculated) {
-                      handleValueChange('todayCash', index, Number(e.target.value) || 0);
-                    }
-                  }}
-                  disabled={item.isCalculated}
-                  className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
-                    ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
-                />
-              </div>
-            ))}
+          <div>
+            <h3 className="font-medium mb-3 text-foreground">Yesterday Invoice</h3>
+            <div className="space-y-2">
+              {yesterdayInvoice.map((item, index) => (
+                <div key={index} className="flex justify-between items-center">
+                  <span className="text-foreground">{item.label}</span>
+                  <input
+                    type="text"
+                    value={item.value}
+                    onChange={(e) => {
+                      if (!item.isCalculated) {
+                        handleValueChange('yesterdayInvoice', index, Number(e.target.value) || 0);
+                      }
+                    }}
+                    disabled={item.isCalculated}
+                    className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
+                      ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-medium mb-3 text-foreground">Today Cash</h3>
+            <div className="space-y-2">
+              {todayCash.map((item, index) => (
+                <div key={index} className="flex justify-between items-center">
+                  <span className="text-foreground">{item.label}</span>
+                  <input
+                    type="text"
+                    value={item.value}
+                    onChange={(e) => {
+                      if (!item.isCalculated) {
+                        handleValueChange('todayCash', index, Number(e.target.value) || 0);
+                      }
+                    }}
+                    disabled={item.isCalculated}
+                    className={`border border-input rounded-md px-3 py-1 w-24 text-right bg-background text-foreground 
+                      ${item.isCalculated ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

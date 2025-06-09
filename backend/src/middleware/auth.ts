@@ -6,6 +6,9 @@ import { prisma } from '../utils/prisma';
 interface JwtPayload {
   userId: string;
   role: string;
+  email: string;
+  firstName: string;
+  lastName: string;
 }
 
 declare global {
@@ -14,6 +17,9 @@ declare global {
       user?: {
         id: string;
         role: string;
+        email: string;
+        firstName: string;
+        lastName: string;
       };
     }
   }
@@ -36,16 +42,15 @@ export const authenticate = async (
       process.env.JWT_SECRET || 'your-super-secret-key'
     ) as JwtPayload;
 
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: { id: true, role: true }
-    });
+    // Set user data from JWT payload
+    req.user = {
+      id: decoded.userId,
+      role: decoded.role,
+      email: decoded.email,
+      firstName: decoded.firstName,
+      lastName: decoded.lastName
+    };
 
-    if (!user) {
-      throw new AppError(401, 'User not found', 'UNAUTHORIZED');
-    }
-
-    req.user = user;
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {

@@ -57,11 +57,8 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
   const [scanInput, setScanInput] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   
-  // State for manual activation
-  const [manualGameNumber, setManualGameNumber] = useState('');
-  const [manualBookNumber, setManualBookNumber] = useState('');
-  const [manualReferenceNumber, setManualReferenceNumber] = useState('');
-  const [isActivating, setIsActivating] = useState(false);
+  // State for errors
+  const [error, setError] = useState<string | null>(null);
   
   // State for return book
   const [returnGameNumber, setReturnGameNumber] = useState('');
@@ -71,13 +68,8 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
   // State for games
   const [games, setGames] = useState<LotteryGame[]>([]);
   
-  // State for pending activation
-  const [pendingActivation, setPendingActivation] = useState<{
-    bookNumber: string;
-    gameNumber: string;
-    bookNumber: string;
-    referenceNumber: string;
-  } | null>(null);
+  // State for game number to add
+  const [gameNumberToAdd, setGameNumberToAdd] = useState<string | null>(null);
   
   const tabs = [
     { id: "activated", label: "Activated Books" },
@@ -111,7 +103,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
     setIsLoading(true);
     try {
       const response = await lotteryAPI.getAllInventory(currentStore.id);
-      const inventory = response.data || [];
+      const inventory: ActivatedBook[] = response.data || [];
       
       if (activeSection === "activated") {
         setActivatedBooks(inventory.filter((item: ActivatedBook) => item.status === 'activated'));
@@ -124,6 +116,37 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Add preprocessTicketNumber function
+  const preprocessTicketNumber = (input: string): string => {
+    // Remove any non-numeric characters except for '-'
+    const cleanedInput = input.replace(/[^\d-]/g, '');
+    
+    // If input already contains hyphens, extract and return the middle part if format is correct
+    if (cleanedInput.includes('-')) {
+        const parts = cleanedInput.split('-');
+        if (parts.length === 3 && 
+            parts[0].length === 3 && 
+            parts[1].length === 6 && 
+            parts[2].length === 1) { 
+            return parts[1]; // Return only the book number part (XXXXXX)
+        }
+    }
+    
+    // For input like: 35503541180493000000000000000 or 355-354118-0
+    // We need at least 10 digits (3 game, 1 separator, 6 book, 1 reference)
+    const numericOnly = cleanedInput.replace(/\D/g, '');
+    
+    if (numericOnly.length >= 10) {
+        // If there's a '0' at index 3 (after 3 game digits), book starts at index 4
+        // Otherwise, book starts at index 3
+        const startIndex = numericOnly[3] === '0' ? 4 : 3;
+        const bookNumber = numericOnly.slice(startIndex, startIndex + 6);
+        return bookNumber; // Return only the book number part (XXXXXX)
+    }
+    
+    return ''; // Return empty string if format is not recognized
   };
 
   // Handle scan input change
@@ -139,136 +162,193 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
     }
   };
 
-  // Handle scan and activate
+  // Update handleScanAndActivate
   const handleScanAndActivate = async () => {
     if (!currentStore?.id) {
       toast.error('No store selected');
       return;
     }
 
-    if (!scanInput.trim()) {
+    const currentScanInput = scanInput.trim();
+
+    if (!currentScanInput) {
       toast.error('Please scan a book number');
       return;
     }
 
-    // Validate book number format: XXX-XXXXXX-X
-    const bookNumberRegex = /^\d{3}-\d{6}-\d{1}$/;
-    if (!bookNumberRegex.test(scanInput.trim())) {
-      toast.error('Invalid book number format. Expected format: XXX-XXXXXX-X');
+    // Preprocess the input to extract only the book number (XXXXXX)
+    const bookNumber = preprocessTicketNumber(currentScanInput);
+    
+    // Validate extracted book number format: XXXXXX
+    const bookNumberRegex = /^\d{6}$/;
+    if (!bookNumberRegex.test(bookNumber)) {
+      toast.error('Invalid book number format. Expected format: XXXXXX');
       return;
     }
 
     setIsScanning(true);
+    setError(null);
+
     try {
-      // Parse the scanned input to extract game number, book number, and reference
-      const [gameNumber, bookNumber, referenceNumber] = scanInput.trim().split('-');
+      // We need the game number to check against the master table.
+      // Extract game number from the original input before preprocessing.
+      const originalParts = currentScanInput.replace(/[^\d-]/g, '').split('-');
+      let gameNumber = '';
+      if (originalParts.length >= 1) {
+        gameNumber = originalParts[0].slice(0, 3);
+      } else {
+         // If no hyphen, try extracting from purely numeric input
+         const numericOnlyOriginal = currentScanInput.replace(/\D/g, '');
+         if (numericOnlyOriginal.length >= 3) {
+            gameNumber = numericOnlyOriginal.slice(0, 3);
+         }
+      }
+
+      if (!gameNumber) {
+          toast.error('Could not extract game number from input.');
+          setIsScanning(false);
+          return;
+      }
       
-      // Check if the game exists in the master table
+      // Check if the game exists in the master table using the extracted gameNumber
       const game = games.find(g => g.gameNumber === gameNumber);
       
       if (!game) {
-        // Game not found - show dialog to add it to the master table
+        setGameNumberToAdd(gameNumber);
         setIsGameDialogOpen(true);
-        // Store the book details to activate after game is added
-        setPendingActivation({
-          bookNumber: scanInput.trim(),
-          gameNumber,
-          bookNumber: bookNumber,
-          referenceNumber
-        });
         setIsScanning(false);
         return;
       }
+
+      // Check if the book exists in inventory using the extracted bookNumber (XXXXXX)
+      const response = await lotteryAPI.getAllInventory(currentStore.id);
       
-      // Activate the book
-      const formattedBookNumber = scanInput.trim();
-      await lotteryAPI.activateBook(formattedBookNumber, currentStore.id);
-      toast.success('Book activated successfully');
+      // Use type assertion based on the ActivatedBook interface
+      const inventory: ActivatedBook[] = response.data || [];
+      
+      const existingBook = inventory.find(item => item.bookNumber === bookNumber);
+
+      if (existingBook) {
+        if (existingBook.status === 'activated') {
+          toast.error('This book is already activated.');
+          setScanInput('');
+          return;
+        } else {
+           // Activate the book using the extracted bookNumber
+           await lotteryAPI.activateBook(bookNumber, currentStore.id);
+           toast.success('Book activated successfully');
+        }
+      } else {
+        // Book not in inventory, add it and activate it using the extracted bookNumber
+        await lotteryAPI.createInventory({
+          gameId: game.id,
+          bookNumber: bookNumber, // Use the extracted bookNumber
+          storeId: currentStore.id,
+          status: 'activated'
+        });
+        toast.success('Book added to inventory and activated');
+      }
+
       setScanInput('');
       loadBooks();
     } catch (error: any) {
-      console.error('Failed to activate book:', error);
-      const errorMessage = error.response?.data?.message || 'Failed to activate book. Please try again.';
-      toast.error(errorMessage);
+      console.error('Failed to process book:', error);
+      if (!(error.response?.data?.message === 'This book is already activated.')) {
+         const errorMessage = error.response?.data?.message || 'Failed to process book. Please try again.';
+         toast.error(errorMessage);
+      }
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  // Update handleManageInventorySubmit
+  const handleManageInventorySubmit = async (bookNumberInput: string) => {
+    if (!currentStore?.id) {
+      toast.error('No store selected');
+      return;
+    }
+
+    // Preprocess the input to extract only the book number (XXXXXX)
+    const bookNumber = preprocessTicketNumber(bookNumberInput);
+    
+    // Validate extracted book number format: XXXXXX
+    const bookNumberRegex = /^\d{6}$/;
+    if (!bookNumberRegex.test(bookNumber)) {
+      toast.error('Invalid book number format. Expected format: XXXXXX');
+      return;
+    }
+
+    try {
+      // We need the game number to check against the master table.
+      // Extract game number from the original input before preprocessing.
+      const originalParts = bookNumberInput.replace(/[^\d-]/g, '').split('-');
+      let gameNumber = '';
+      if (originalParts.length >= 1) {
+        gameNumber = originalParts[0].slice(0, 3);
+      } else {
+         // If no hyphen, try extracting from purely numeric input
+         const numericOnlyOriginal = bookNumberInput.replace(/\D/g, '');
+         if (numericOnlyOriginal.length >= 3) {
+            gameNumber = numericOnlyOriginal.slice(0, 3);
+         }
+      }
+
+      if (!gameNumber) {
+          toast.error('Could not extract game number from input.');
+          return;
+      }
+
+      // Check if the game exists in the master table using the extracted gameNumber
+      const game = games.find(g => g.gameNumber === gameNumber);
+      
+      if (!game) {
+        setGameNumberToAdd(gameNumber);
+        setIsGameDialogOpen(true);
+        return;
+      }
+
+      // Check if the book exists in inventory using the extracted bookNumber (XXXXXX)
+      const response = await lotteryAPI.getAllInventory(currentStore.id);
+      // Use type assertion based on the ActivatedBook interface
+      const inventory: ActivatedBook[] = response.data || [];
+      
+      const existingBook = inventory.find(item => item.bookNumber === bookNumber);
+
+      if (existingBook) {
+        toast.error('Book already exists in inventory');
+        return;
+      }
+
+      // Add book to inventory with 'available' status using the extracted bookNumber
+      await lotteryAPI.createInventory({
+        gameId: game.id,
+        bookNumber: bookNumber, // Use the extracted bookNumber
+        storeId: currentStore.id,
+        status: 'available'
+      });
+
+      toast.success('Book added to inventory');
+      loadBooks();
+    } catch (error: any) {
+      console.error('Failed to add book to inventory:', error);
+      const errorMessage = error.response?.data?.message || 'Failed to add book to inventory. Please try again.';
+      toast.error(errorMessage);
     }
   };
 
   // Handle game dialog close
   const handleGameDialogClose = async (saved: boolean) => {
     setIsGameDialogOpen(false);
-    if (saved && pendingActivation) {
+    if (saved) {
       // Reload games to get the newly added game
       await loadGames();
-      // Activate the pending book
-      try {
-        await lotteryAPI.activateBook(pendingActivation.bookNumber, currentStore?.id);
-        toast.success('Book activated successfully');
-        setScanInput('');
-        loadBooks();
-      } catch (error: any) {
-        console.error('Failed to activate book:', error);
-        const errorMessage = error.response?.data?.message || 'Failed to activate book. Please try again.';
-        toast.error(errorMessage);
+      // If we have a pending scan input, retry the operation
+      if (scanInput) {
+        handleScanAndActivate();
       }
-      setPendingActivation(null);
     }
-  };
-
-  // Handle manual activation
-  const handleManualActivate = async () => {
-    if (!currentStore?.id) {
-      toast.error('No store selected');
-      return;
-    }
-
-    if (!manualGameNumber || !manualBookNumber || !manualReferenceNumber) {
-      toast.error('Please fill in all fields');
-      return;
-    }
-
-    // Validate each part of the book number
-    if (!/^\d{3}$/.test(manualGameNumber)) {
-      toast.error('Game number must be 3 digits');
-      return;
-    }
-    if (!/^\d{6}$/.test(manualBookNumber)) {
-      toast.error('Book number must be 6 digits');
-      return;
-    }
-    if (!/^\d{1}$/.test(manualReferenceNumber)) {
-      toast.error('Reference number must be 1 digit');
-      return;
-    }
-
-    setIsActivating(true);
-    try {
-      // Check if the game exists in the master table
-      const game = games.find(g => g.gameNumber === manualGameNumber);
-      
-      if (!game) {
-        // Game not found - prompt user to add it to the master table
-        toast.error(`Game ${manualGameNumber} not found. Please add it to the master table first.`);
-        setIsGameDialogOpen(true);
-        return;
-      }
-      
-      // Activate the book
-      const formattedBookNumber = `${manualGameNumber}-${manualBookNumber}-${manualReferenceNumber}`;
-      await lotteryAPI.activateBook(formattedBookNumber, currentStore.id);
-      toast.success('Book activated successfully');
-      setManualGameNumber('');
-      setManualBookNumber('');
-      setManualReferenceNumber('');
-      loadBooks();
-    } catch (error: any) {
-      console.error('Failed to activate book:', error);
-      const errorMessage = error.response?.data?.message || 'Failed to activate book. Please try again.';
-      toast.error(errorMessage);
-    } finally {
-      setIsActivating(false);
-    }
+    setGameNumberToAdd(null);
   };
 
   // Handle return book
@@ -288,16 +368,16 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
       toast.error('Game number must be 3 digits');
       return;
     }
+    // We now use only the 6-digit book number for return
     if (!/^\d{6}$/.test(returnTicketNumber)) {
-      toast.error('Ticket number must be 6 digits');
+      toast.error('Book number must be 6 digits');
       return;
     }
 
     setIsReturning(true);
     try {
-      // Return the book
-      const formattedBookNumber = `${returnGameNumber}-${returnTicketNumber}-0`;
-      await lotteryAPI.returnBook(formattedBookNumber, currentStore.id);
+      // Return the book using the 6-digit book number
+      await lotteryAPI.returnBook(returnTicketNumber, currentStore.id);
       
       toast.success('Book returned successfully');
       setReturnGameNumber('');
@@ -312,14 +392,14 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
     }
   };
 
-  // Parse barcode for manual activation
+  // Parse barcode for manual activation - Keep this for the scan input
   const parseBarcodeForManualActivation = (barcode: string) => {
     // Expected format: XXX-XXXXXX-X (Game-Book-Reference)
     const parts = barcode.split('-');
     
     if (parts.length !== 3) {
       toast.error('Invalid barcode format. Expected format: XXX-XXXXXX-X');
-      return;
+      return null; // Return null if format is incorrect
     }
     
     const [gameNumber, bookNumber, referenceNumber] = parts;
@@ -327,13 +407,11 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
     // Validate format
     if (!/^\d{3}$/.test(gameNumber) || !/^\d{6}$/.test(bookNumber) || !/^\d{1}$/.test(referenceNumber)) {
       toast.error('Invalid format. Game number should be 3 digits, book number 6 digits, and reference 1 digit');
-      return;
+      return null; // Return null if format is incorrect
     }
     
-    // Set the values in the manual activation fields
-    setManualGameNumber(gameNumber);
-    setManualBookNumber(bookNumber);
-    setManualReferenceNumber(referenceNumber);
+    // Return the extracted game number and book number
+    return { gameNumber, bookNumber };
   };
 
   return (
@@ -359,7 +437,8 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Adjusted grid layout for scan and return sections */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border border-border rounded-md p-3 bg-card">
             <h3 className="font-medium mb-2 text-foreground">Scan Code and Activate</h3>
             <div className="flex mb-2">
@@ -379,91 +458,16 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                 disabled={isScanning}
               >
                 {isScanning ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Scanning...
+                  </>
                 ) : (
                   <Camera className="h-5 w-5" />
                 )}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">Format: XXX-XXXXXX-X</p>
-          </div>
-
-          <div className="border border-border rounded-md p-3 bg-card">
-            <h3 className="font-medium mb-2 text-foreground">Activate Manually</h3>
-            <div className="space-y-2">
-              <div className="relative">
-                <input 
-                  type="text" 
-                  placeholder="Scan or Enter Game Number (XXX)" 
-                  className="border border-input rounded-md px-3 py-2 w-full bg-background text-foreground placeholder:text-muted-foreground pr-10"
-                  value={manualGameNumber}
-                  onChange={(e) => setManualGameNumber(e.target.value)}
-                  disabled={isActivating}
-                />
-                <Barcode 
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 cursor-pointer" 
-                  onClick={() => {
-                    const barcode = prompt("Scan or enter barcode:");
-                    if (barcode) {
-                      parseBarcodeForManualActivation(barcode);
-                    }
-                  }}
-                />
-              </div>
-              <div className="relative">
-                <input 
-                  type="text" 
-                  placeholder="Scan or Enter Book Number (XXXXXX)" 
-                  className="border border-input rounded-md px-3 py-2 w-full bg-background text-foreground placeholder:text-muted-foreground pr-10"
-                  value={manualBookNumber}
-                  onChange={(e) => setManualBookNumber(e.target.value)}
-                  disabled={isActivating}
-                />
-                <Barcode 
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 cursor-pointer" 
-                  onClick={() => {
-                    const barcode = prompt("Scan or enter barcode:");
-                    if (barcode) {
-                      parseBarcodeForManualActivation(barcode);
-                    }
-                  }}
-                />
-              </div>
-              <div className="relative">
-                <input 
-                  type="text" 
-                  placeholder="Scan or Enter Reference Number (X)" 
-                  className="border border-input rounded-md px-3 py-2 w-full bg-background text-foreground placeholder:text-muted-foreground pr-10"
-                  value={manualReferenceNumber}
-                  onChange={(e) => setManualReferenceNumber(e.target.value)}
-                  disabled={isActivating}
-                />
-                <Barcode 
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 cursor-pointer" 
-                  onClick={() => {
-                    const barcode = prompt("Scan or enter barcode:");
-                    if (barcode) {
-                      parseBarcodeForManualActivation(barcode);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <Button 
-              variant="default" 
-              className="w-full mt-2 bg-primary hover:bg-primary/90 text-primary-foreground"
-              onClick={handleManualActivate}
-              disabled={isActivating}
-            >
-              {isActivating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Activating...
-                </>
-              ) : (
-                'Activate'
-              )}
-            </Button>
+            <p className="text-xs text-muted-foreground">Scan Format: XXX-XXXXXX-X or numeric only</p>
           </div>
 
           <div className="border border-border rounded-md p-3 bg-card">
@@ -487,6 +491,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                       if (parts.length >= 1) {
                         setReturnGameNumber(parts[0]);
                       }
+                      // Keep only the book number for return
                       if (parts.length >= 2) {
                         setReturnTicketNumber(parts[1]);
                       }
@@ -497,7 +502,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
               <div className="relative">
                 <input 
                   type="text" 
-                  placeholder="Scan or Enter Ticket Number (XXXXXX)" 
+                  placeholder="Scan or Enter Book Number (XXXXXX)" 
                   className="border border-input rounded-md px-3 py-2 w-full bg-background text-foreground placeholder:text-muted-foreground pr-10"
                   value={returnTicketNumber}
                   onChange={(e) => setReturnTicketNumber(e.target.value)}
@@ -508,6 +513,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                   onClick={() => {
                     const barcode = prompt("Scan or enter barcode:");
                     if (barcode) {
+                       // Keep only the book number for return
                       const parts = barcode.split('-');
                       if (parts.length >= 1) {
                         setReturnGameNumber(parts[0]);
@@ -555,7 +561,6 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                   <th className="pb-2 text-foreground">Game Name</th>
                   <th className="pb-2 text-foreground">Game Number</th>
                   <th className="pb-2 text-foreground">Book Number</th>
-                  <th className="pb-2 text-foreground">Reference</th>
                   <th className="pb-2 text-foreground">Status</th>
                   <th className="pb-2 text-foreground">Actions</th>
                 </tr>
@@ -563,7 +568,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-4">
+                    <td colSpan={6} className="text-center py-4">
                       <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                     </td>
                   </tr>
@@ -575,7 +580,6 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                         <td>{book.game.gameName}</td>
                         <td>{book.game.gameNumber}</td>
                         <td>{book.bookNumber}</td>
-                        <td>{book.referenceNumber}</td>
                         <td>
                           <span className="px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
                             {book.status}
@@ -597,7 +601,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={7} className="text-center py-4 text-muted-foreground">
+                      <td colSpan={6} className="text-center py-4 text-muted-foreground">
                         No activated books available
                       </td>
                     </tr>
@@ -610,7 +614,6 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                         <td>{book.game.gameName}</td>
                         <td>{book.game.gameNumber}</td>
                         <td>{book.bookNumber}</td>
-                        <td>{book.referenceNumber}</td>
                         <td>
                           <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-800">
                             {book.status}
@@ -621,9 +624,10 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                             variant="ghost" 
                             size="sm"
                             onClick={() => {
-                              setManualGameNumber(book.game.gameNumber);
-                              setManualBookNumber(book.bookNumber);
-                              setManualReferenceNumber(book.referenceNumber);
+                              // The manual activation section is removed, this button will no longer exist
+                              // setManualGameNumber(book.game.gameNumber);
+                              // setManualBookNumber(book.bookNumber);
+                              // setManualReferenceNumber(book.referenceNumber);
                             }}
                           >
                             Reactivate
@@ -633,7 +637,7 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={7} className="text-center py-4 text-muted-foreground">
+                      <td colSpan={6} className="text-center py-4 text-muted-foreground">
                         No returned books available
                       </td>
                     </tr>
@@ -646,18 +650,33 @@ const LotteryActivatedBooks: React.FC<LotteryActivatedBooksProps> = ({ data = []
       </div>
 
       {/* Dialogs for Lottery management */}
-      <Dialog open={isGameDialogOpen} onOpenChange={(open) => !open && handleGameDialogClose(false)}>
+      <Dialog 
+        open={isGameDialogOpen} 
+        onOpenChange={(open) => {
+          if (!open) {
+            handleGameDialogClose(false);
+          }
+        }}
+      >
         <LotteryGameDialog 
           open={isGameDialogOpen} 
-          onOpenChange={(open) => !open && handleGameDialogClose(true)} 
+          onOpenChange={(open) => {
+            if (!open) {
+              handleGameDialogClose(false);
+            } else {
+              handleGameDialogClose(true);
+            }
+          }}
+          initialGameNumber={gameNumberToAdd}
         />
       </Dialog>
       
       <Dialog open={isInventoryDialogOpen} onOpenChange={setIsInventoryDialogOpen}>
         <InventoryDialog 
           open={isInventoryDialogOpen} 
-          onOpenChange={setIsInventoryDialogOpen} 
+          onOpenChange={setIsInventoryDialogOpen}
           storeId={currentStore?.id}
+          onSubmit={handleManageInventorySubmit}
         />
       </Dialog>
     </div>
